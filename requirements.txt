@@ -1,0 +1,15 @@
+fastapi
+uvicorn
+qdrant-client
+sentence-transformers
+pypdf
+python-docx
+torch
+openai
+python-dotenv
+fastembed
+google-generativeai
+redis
+pymongo
+scikit-learn
+numpy
