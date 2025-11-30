@@ -127,3 +127,4 @@ RAG/
 - Qdrant connection is only established when you use upload/query endpoints
 - Uploaded files are stored in the `uploads/` directory
 - The RAG system uses the `all-MiniLM-L6-v2` sentence transformer model
+
