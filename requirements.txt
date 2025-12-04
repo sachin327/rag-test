@@ -13,3 +13,4 @@ redis
 pymongo
 scikit-learn
 numpy
+python-multipart
