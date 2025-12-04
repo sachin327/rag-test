@@ -36,24 +36,15 @@ class RAGSystem:
     def __init__(
         self,
         collection_name: str = "documents",
-        model_name: str = "all-MiniLM-L6-v2",
         chunk_size: int = 512,
-        chunk_overlap: int = 100,
-        host: str = "localhost",
-        port: int = 6333,
-        grpc_port: int = 6334,
-        api_key: str = "",
+        chunk_overlap: int = 100
     ):
         """Initializes the RAG system with Qdrant DB.
 
         Args:
             collection_name: Name of the Qdrant collection.
-            model_name: Name of the sentence transformer model.
             chunk_size: Size of text chunks.
             chunk_overlap: Overlap between chunks.
-            host: Qdrant server host.
-            port: Qdrant server HTTP port.
-            grpc_port: Qdrant server gRPC port.
         """
         self.collection_name = collection_name
         self.chunk_size = chunk_size
@@ -61,11 +52,10 @@ class RAGSystem:
 
         # Initialize Qdrant DB with gRPC enabled
         self.db = QdrantDB(
-            host=host,
-            port=port,
-            grpc_port=grpc_port,
-            model_name=model_name,
-            prefer_grpc=True,
+            host=os.getenv("QDRANT_HOST"),
+            port=os.getenv("QDRANT_PORT"),
+            grpc_port=os.getenv("QDRANT_GRPC_PORT"),
+            prefer_grpc=False,
         )
 
         # Create collection (384 is the vector size for all-MiniLM-L6-v2)

@@ -1,3 +1,4 @@
+import os
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -19,7 +20,7 @@ class QdrantDB:
         host: Optional[str] = None,
         port: Optional[int] = None,
         grpc_port: Optional[int] = None,
-        prefer_grpc: bool = True,
+        prefer_grpc: bool = False,
         model_name: str = "all-MiniLM-L6-v2",
         api_key: Optional[str] = None,
     ):
@@ -33,6 +34,7 @@ class QdrantDB:
             model_name: Name of the Sentence Transformer model.
         """
 
+        print(f"Connecting to Qdrant api {api_key}")
         self.client = QdrantClient(
             url=f"{host}:{port}",
             api_key=api_key,
@@ -140,6 +142,34 @@ class QdrantDB:
                 logger.info(f"Collection '{collection_name}' created successfully.")
         except Exception as e:
             logger.exception(f"Error creating collection '{collection_name}': {e}")
+
+    @timing_decorator
+    def create_payload_index(
+        self,
+        collection_name: str,
+        field_name: str,
+        field_schema: models.PayloadSchemaType = models.PayloadSchemaType.KEYWORD,
+    ):
+        """Creates a payload index for a specific field.
+
+        Args:
+            collection_name: Name of the collection.
+            field_name: Name of the field to index.
+            field_schema: Type of index (Keyword, Integer, Float, Geo, Text).
+        """
+        try:
+            self.client.create_payload_index(
+                collection_name=collection_name,
+                field_name=field_name,
+                field_schema=field_schema,
+            )
+            logger.info(
+                f"Index created for field '{field_name}' in collection '{collection_name}'."
+            )
+        except Exception as e:
+            logger.exception(
+                f"Error creating index for field '{field_name}' in '{collection_name}': {e}"
+            )
 
     @timing_decorator
     def add_text(
@@ -295,13 +325,29 @@ class QdrantDB:
 if __name__ == "__main__":
     # Example Usage
     # Note: This requires a running Qdrant instance on localhost:6334
-
-    db = QdrantDB()
+    collection_name = os.getenv("QDRANT_COLLECTION_NAME")
+    host = os.getenv("QDRANT_HOST")
+    port = os.getenv("QDRANT_PORT")
+    grpc_port = os.getenv("QDRANT_GRPC_PORT")
+    prefer_grpc = os.getenv("QDRANT_PREFER_GRPC", "False").lower() == "true"
+    model_name = os.getenv("QDRANT_MODEL_NAME")
+    api_key = os.getenv("QDRANT_API_KEY")
+    db = QdrantDB(
+        host=host,
+        port=port,
+        grpc_port=grpc_port,
+        prefer_grpc=prefer_grpc,
+        model_name=model_name,
+        api_key=api_key,
+    )
 
     # 1. Create Collection
     COLLECTION_NAME = "test_collection"
     VECTOR_SIZE = 384  # Example size for all-MiniLM-L6-v2
     db.create_collection(COLLECTION_NAME, VECTOR_SIZE)
+
+    # 1.1 Create Payload Index
+    db.create_payload_index(COLLECTION_NAME, "category", models.PayloadSchemaType.KEYWORD)
 
     # 2. Add Text
     sample_text = "This is a sample document about AI."

@@ -98,12 +98,13 @@ def get_rag_system() -> RAGSystem:
     global RAG_SYSTEM
     if RAG_SYSTEM is None:
         try:
+            collection_name = os.getenv("QDRANT_COLLECTION_NAME")
             host = os.getenv("QDRANT_HOST")
             port = os.getenv("QDRANT_PORT")
             grpc_port = os.getenv("QDRANT_GRPC_PORT")
             api_key = os.getenv("QDRANT_API_KEY")
             RAG_SYSTEM = RAGSystem(
-                collection_name=os.getenv("QDRANT_COLLECTION_NAME"),
+                collection_name=collection_name,
                 host=host,
                 port=port,
                 grpc_port=grpc_port,
