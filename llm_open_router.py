@@ -1,13 +1,15 @@
-import requests
 import os
+
+import requests
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_URL = os.getenv("OPENROUTER_URL")
-MODEL = os.getenv("MODEL")
+MODEL = os.getenv("OPEN_ROUTER_MODEL")
+
 
 def call_llm(system_prompt: str, user_prompt: str, temperature: float = 0.7) -> str:
-    """
-    Minimal LLM caller extracted from your QuestionService.
+    """Minimal LLM caller extracted from your QuestionService.
+
     Returns the raw text output from the model.
     """
 

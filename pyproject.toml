@@ -1,0 +1,21 @@
+line-length = 80
+target-version = "py311"
+
+[lint]
+# Common rules: pyflakes, pycodestyle, isort-like, etc.
+select = [
+  "E",  # pycodestyle errors
+  "F",  # pyflakes (undefined names, etc.)
+  "W",  # pycodestyle warnings
+  "I",  # import sorting
+  "B",  # bugbear (common bugs)
+  "UP", # pyupgrade
+]
+
+ignore = [
+  "E501", # line length (let black handle it)
+]
+
+# Allow ruff to auto-fix these safely:
+fixable = ["E", "F", "W", "I", "B", "UP"]
+unfixable = []
