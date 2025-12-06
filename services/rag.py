@@ -1,32 +1,18 @@
 import json
 import os
 import time
-from functools import wraps
 from typing import Dict, List, Optional
-
 from qdrant_client.http import models
 
-from document_loader import DocumentLoader
-from llm_open_router import call_llm
+from document.document_loader import DocumentLoader
+from llm.llm_open_router import LLMService
 from logger import get_logger
-from qdrant_db import QdrantDB
+from db.qdrant_db import QdrantDB
+from utils.common import timing_decorator
+from utils.prompt import PromptService
 
 # Initialize logger
 logger = get_logger(__name__)
-
-
-def timing_decorator(func):
-    """Decorator to measure function execution time."""
-
-    @wraps(func)
-    def wrapper(*args, **kwargs):
-        start_time = time.time()
-        result = func(*args, **kwargs)
-        end_time = time.time()
-        logger.debug(f"[TIME] {func.__name__} took {end_time - start_time:.4f} seconds")
-        return result
-
-    return wrapper
 
 
 class RAGSystem:
@@ -35,9 +21,9 @@ class RAGSystem:
 
     def __init__(
         self,
-        collection_name: str = "documents",
-        chunk_size: int = 512,
-        chunk_overlap: int = 100
+        collection_name: str = os.getenv("QDRANT_COLLECTION_NAME"),
+        chunk_size: int = os.getenv("QDRANT_CHUNK_SIZE"),
+        chunk_overlap: int = os.getenv("QDRANT_CHUNK_OVERLAP"),
     ):
         """Initializes the RAG system with Qdrant DB.
 
@@ -49,6 +35,7 @@ class RAGSystem:
         self.collection_name = collection_name
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self.llm_service = LLMService()
 
         # Initialize Qdrant DB with gRPC enabled
         self.db = QdrantDB(
@@ -56,14 +43,14 @@ class RAGSystem:
             port=os.getenv("QDRANT_PORT"),
             grpc_port=os.getenv("QDRANT_GRPC_PORT"),
             prefer_grpc=False,
+            api_key=os.getenv("QDRANT_API_KEY"),
+            vector_size=os.getenv("QDRANT_VECTOR_SIZE"),
         )
 
-        # Create collection (384 is the vector size for all-MiniLM-L6-v2)
-        self.db.create_collection(self.collection_name, vector_size=384)
+        # Create collection (512 is the vector size for all-MiniLM-L6-v2)
+        self.db.create_collection(self.collection_name)
 
-    def chunk_with_overlap(
-        self, text: str, chunk_size: int = None, overlap: int = None
-    ) -> List[str]:
+    def split_chunks(self, text: str) -> List[str]:
         """Splits text into chunks with overlap.
 
         Args:
@@ -74,11 +61,6 @@ class RAGSystem:
         Returns:
             List of text chunks with overlap
         """
-        if chunk_size is None:
-            chunk_size = self.chunk_size
-        if overlap is None:
-            overlap = self.chunk_overlap
-
         if not text:
             return []
 
@@ -87,7 +69,7 @@ class RAGSystem:
         text_length = len(text)
 
         while start < text_length:
-            end = min(start + chunk_size, text_length)
+            end = min(start + self.chunk_size, text_length)
 
             # Extend to sentence boundary if possible
             if end < text_length:
@@ -106,108 +88,11 @@ class RAGSystem:
 
             # Move start position considering overlap
             if end < text_length:
-                start = end - overlap
+                start = end - self.chunk_overlap
             else:
                 start = text_length
 
         return chunks
-
-    def _split_text_into_chunks(self, text: str, chunk_size: int = None) -> List[str]:
-        """Splits text into chunks (sentence-aware, no overlap).
-
-        Args:
-            text: Full text
-            chunk_size: Target chunk size (default: uses self.chunk_size)
-
-        Returns:
-            List of text chunks
-        """
-        if chunk_size is None:
-            chunk_size = self.chunk_size
-
-        if not text:
-            return []
-
-        chunks = []
-        start = 0
-        text_length = len(text)
-
-        while start < text_length:
-            end = min(start + chunk_size, text_length)
-
-            # Extend to sentence boundary
-            if end < text_length and text[end - 1] != ".":
-                next_stop = text.find(".", end)
-                if next_stop != -1:
-                    end = next_stop + 1
-
-            chunk = text[start:end].strip()
-            if chunk:
-                chunks.append(chunk)
-
-            start = end
-
-        return chunks
-
-    def extract_topics_and_summary(
-        self, text: str, max_topics: int = 3
-    ) -> Dict[str, any]:
-        """Extracts topics and summary from text using LLM.
-
-        Args:
-            text: Chunk text
-            max_topics: Maximum number of topics to extract
-
-        Returns:
-            Dictionary with 'topic_keys', 'summary', and 'importance_score'
-        """
-        system_prompt = """You are an AI assistant that analyzes educational content and extracts metadata."""
-
-        user_prompt = f"""Analyze the following text and extract key topics and a summary.
-
-Text:
-{text[:800]}
-
-Return ONLY a JSON object with:
-- "topic_keys": array of {max_topics} short topic labels (lowercase, 1-3 words each)
-- "summary": one-sentence summary of the main point
-- "importance_score": float 0-1 indicating how important/informative this text is
-
-Example:
-{{"topic_keys": ["fluids", "pressure", "states_of_matter"], "summary": "Explains how pressure varies in fluids.", "importance_score": 0.75}}
-
-JSON:"""
-
-        try:
-            response = call_llm(system_prompt=system_prompt, user_prompt=user_prompt)
-
-            # Try to parse JSON from response
-            # Remove markdown code blocks if present
-            response_text = response.strip()
-            if response_text.startswith("```"):
-                response_text = response_text.split("```")[1]
-                if response_text.startswith("json"):
-                    response_text = response_text[4:]
-
-            result = json.loads(response_text.strip())
-
-            # Normalize topics (import normalize_topics if needed, otherwise do basic normalization)
-            if "topic_keys" in result:
-                result["topic_keys"] = [
-                    t.lower().strip().replace(" ", "_")
-                    for t in result.get("topic_keys", [])
-                ]
-
-            return result
-
-        except Exception as e:
-            logger.warning(f"Failed to extract topics/summary with LLM: {e}")
-            # Fallback: simple heuristics
-            return {
-                "topic_keys": [],
-                "summary": text[:100] + "..." if len(text) > 100 else text,
-                "importance_score": 0.5,
-            }
 
     def generate_chunk_summary(
         self,
@@ -246,16 +131,12 @@ JSON:"""
 
 Provide concise summaries focused on the main concepts relevant to this subject and chapter."""
 
-        user_prompt = f"""Analyze the following text and provide a concise summary in approximately 200 words.
-Focus on the main concepts, key points, and important information relevant to this subject and chapter.
-
-Text:
-{text}
-
-Summary (around 200 words):"""
+        user_prompt = PromptService.get_rag_summary_prompt(text=text)
 
         try:
-            summary = call_llm(system_prompt=system_prompt, user_prompt=user_prompt)
+            summary = self.llm_service.get_response(
+                system_prompt=system_prompt, user_prompt=user_prompt
+            )
             logger.debug(f"Generated summary: {len(summary)} chars")
             return summary.strip()
         except Exception as e:
@@ -317,7 +198,9 @@ Example:
 JSON:"""
 
         try:
-            response = call_llm(system_prompt=system_prompt, user_prompt=user_prompt)
+            response = self.llm_service.get_response(
+                system_prompt=system_prompt, user_prompt=user_prompt
+            )
 
             # Parse JSON from response
             response_text = response.strip()
@@ -347,16 +230,15 @@ JSON:"""
             logger.warning(f"Failed to generate final summary/topics with LLM: {e}")
             return {"final_summary": combined_summaries[:500] + "...", "topic_keys": []}
 
-    def ingest_document(
+    def upload_document(
         self,
         file_path: str,
         class_id: str,
+        class_name: str,
         chapter_id: str,
         chapter_name: str,
-        class_name: str,
-        subject_name: str,
         subject_id: str,
-        collection_name: str = None,
+        subject_name: str,
     ) -> Dict:
         """
         Ingests a document with enhanced metadata extraction using multi-stage processing:
@@ -370,16 +252,12 @@ JSON:"""
             chapter_id: Chapter identifier
             chapter_name: Name of the chapter
             class_name: Name of the class
-            subject_name: Name of the subject
             subject_id: ID of the subject
-            collection_name: Qdrant collection name (optional, uses self.collection_name if None)
+            subject_name: Name of the subject
 
         Returns:
             Dictionary with ingestion statistics
         """
-        if collection_name is None:
-            collection_name = self.collection_name
-
         logger.info(f"Starting enhanced ingestion for {file_path}")
         start_time = time.time()
 
@@ -393,7 +271,7 @@ JSON:"""
         logger.info(f"Loaded document: {len(raw_text)} chars")
 
         # Step 2: Chunk into 4000 char chunks for summary generation
-        large_chunks = self._split_text_into_chunks(raw_text, chunk_size=4000)
+        large_chunks = self.split_chunks(raw_text)
         logger.info(f"Created {len(large_chunks)} large chunks (4000 chars each)")
 
         # Step 3: Generate summary for each large chunk

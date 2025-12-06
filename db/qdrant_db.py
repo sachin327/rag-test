@@ -6,9 +6,10 @@ from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from qdrant_client.http.models import Distance, VectorParams
+from utils.embedding import embedding
 
 from logger import get_logger
-from utils import timing_decorator
+from utils.common import timing_decorator
 
 load_dotenv()
 logger = get_logger(__name__)
@@ -17,9 +18,9 @@ logger = get_logger(__name__)
 class QdrantDB:
     def __init__(
         self,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        grpc_port: Optional[int] = None,
+        host,
+        port,
+        vector_size,
         prefer_grpc: bool = False,
         model_name: str = "all-MiniLM-L6-v2",
         api_key: Optional[str] = None,
@@ -34,94 +35,22 @@ class QdrantDB:
             model_name: Name of the Sentence Transformer model.
         """
 
-        print(f"Connecting to Qdrant api {api_key}")
         self.client = QdrantClient(
             url=f"{host}:{port}",
             api_key=api_key,
             prefer_grpc=prefer_grpc,
         )
-        logger.info(
-            f"Connected to Qdrant at {host}:{port} (gRPC: {prefer_grpc}, gRPC Port: {grpc_port})"
-        )
+        logger.info(f"Connected to Qdrant at {host}:{port} (gRPC: {prefer_grpc})")
 
         # Lazy loading: only load model when needed
         self.model_name = model_name
         self._model = None
-
-    @property
-    def model(self):
-        """Lazy load the model on first access."""
-        if self._model is None:
-            # Try loading FastEmbed first for speed
-            try:
-                # Suppress ONNX Runtime warnings (like GPU discovery failures on Windows)
-                import os
-
-                os.environ["ORT_LOGGING_LEVEL"] = "3"
-
-                from fastembed import TextEmbedding
-
-                logger.info(f"Loading FastEmbed model '{self.model_name}'...")
-
-                # Map common short names to FastEmbed supported names
-                fastembed_model_name = self.model_name
-                if self.model_name == "all-MiniLM-L6-v2":
-                    fastembed_model_name = "sentence-transformers/all-MiniLM-L6-v2"
-
-                try:
-                    self._model = TextEmbedding(model_name=fastembed_model_name)
-                    self._model_type = "fastembed"
-                    logger.info(
-                        f"FastEmbed model '{fastembed_model_name}' loaded successfully."
-                    )
-                except ValueError:
-                    logger.warning(
-                        f"Model '{fastembed_model_name}' not found in FastEmbed. Switching to default fast model..."
-                    )
-                    # Fallback to default FastEmbed model (usually BAAI/bge-small-en-v1.5) which is very good and fast
-                    self._model = TextEmbedding()
-                    self._model_type = "fastembed"
-                    logger.info(
-                        "Loaded default FastEmbed model (BAAI/bge-small-en-v1.5)."
-                    )
-
-            except ImportError:
-                logger.info(
-                    "FastEmbed not installed. For faster loading, install it: pip install fastembed"
-                )
-                logger.info("Falling back to SentenceTransformers...")
-                self._load_sentence_transformer()
-            except Exception as e:
-                logger.warning(
-                    f"FastEmbed failed to load: {e}. Falling back to SentenceTransformers..."
-                )
-                self._load_sentence_transformer()
-
-        return self._model
-
-    def _load_sentence_transformer(self):
-        """Helper to load SentenceTransformer."""
-        try:
-            import torch
-            from sentence_transformers import SentenceTransformer
-
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            logger.info(
-                f"Loading SentenceTransformer model '{self.model_name}' on {device}..."
-            )
-            self._model = SentenceTransformer(self.model_name, device=device)
-            self._model_type = "sentence_transformers"
-            logger.info("Model loaded successfully.")
-        except ImportError:
-            raise ImportError(
-                "Neither 'fastembed' nor 'sentence-transformers' is installed. Please install one."
-            )
+        self.vector_size = vector_size
 
     @timing_decorator
     def create_collection(
         self,
         collection_name: str,
-        vector_size: int,
         distance: Distance = Distance.COSINE,
     ):
         """Creates a new collection in Qdrant.
@@ -137,7 +66,9 @@ class QdrantDB:
             else:
                 self.client.create_collection(
                     collection_name=collection_name,
-                    vectors_config=VectorParams(size=vector_size, distance=distance),
+                    vectors_config=VectorParams(
+                        size=self.vector_size, distance=distance
+                    ),
                 )
                 logger.info(f"Collection '{collection_name}' created successfully.")
         except Exception as e:
@@ -189,25 +120,15 @@ class QdrantDB:
         # Ensure text is in the payload for retrieval
         payload["text"] = text
 
-        # Ensure model is loaded before checking type
-        model = self.model
-
         # Generate embedding based on the loaded model type
-        if getattr(self, "_model_type", "") == "fastembed":
-            # FastEmbed returns a generator of vectors
-            embedding = list(model.embed([text]))[0]
-        else:
-            # SentenceTransformers returns a numpy array or tensor
-            embedding = model.encode(text).tolist()
+        embd = embedding.embed([text])[0]
 
         point_id = str(uuid.uuid4())
 
         try:
             self.client.upsert(
                 collection_name=collection_name,
-                points=[
-                    models.PointStruct(id=point_id, vector=embedding, payload=payload)
-                ],
+                points=[models.PointStruct(id=point_id, vector=embd, payload=payload)],
             )
             logger.debug(f"Added text to '{collection_name}' with ID {point_id}")
         except Exception as e:
@@ -232,38 +153,7 @@ class QdrantDB:
         Returns:
             List of search results with scores and payloads.
         """
-        # Ensure model is loaded before checking type
-        model = self.model
-
-        # Generate embedding based on the loaded model type
-        if getattr(self, "_model_type", "") == "fastembed":
-            query_vector = list(model.embed([query_text]))[0]
-        else:
-            query_vector = model.encode(query_text).tolist()
-
-        return self.search_by_embedding(
-            collection_name, query_vector, limit, filter_conditions
-        )
-
-    @timing_decorator
-    def search_by_embedding(
-        self,
-        collection_name: str,
-        query_vector: List[float],
-        limit: int = 5,
-        filter_conditions: Optional[models.Filter] = None,
-    ) -> List[Dict]:
-        """Searches for similar texts using a query embedding.
-
-        Args:
-            collection_name: Name of the collection.
-            query_vector: The embedding vector to search with.
-            limit: Number of results to return.
-            filter_conditions: Optional Qdrant filters.
-
-        Returns:
-            List of search results with scores and payloads.
-        """
+        query_vector = embedding.embed([query_text])[0]
         try:
             search_result = self.client.query_points(
                 collection_name=collection_name,
@@ -328,14 +218,14 @@ if __name__ == "__main__":
     collection_name = os.getenv("QDRANT_COLLECTION_NAME")
     host = os.getenv("QDRANT_HOST")
     port = os.getenv("QDRANT_PORT")
-    grpc_port = os.getenv("QDRANT_GRPC_PORT")
-    prefer_grpc = os.getenv("QDRANT_PREFER_GRPC", "False").lower() == "true"
+    vector_size = os.getenv("QDRANT_VECTOR_SIZE")
+    prefer_grpc = os.getenv("QDRANT_PREFER_GRPC", False).lower() == "true"
     model_name = os.getenv("QDRANT_MODEL_NAME")
     api_key = os.getenv("QDRANT_API_KEY")
     db = QdrantDB(
         host=host,
         port=port,
-        grpc_port=grpc_port,
+        vector_size=vector_size,
         prefer_grpc=prefer_grpc,
         model_name=model_name,
         api_key=api_key,
@@ -347,7 +237,9 @@ if __name__ == "__main__":
     db.create_collection(COLLECTION_NAME, VECTOR_SIZE)
 
     # 1.1 Create Payload Index
-    db.create_payload_index(COLLECTION_NAME, "category", models.PayloadSchemaType.KEYWORD)
+    db.create_payload_index(
+        COLLECTION_NAME, "category", models.PayloadSchemaType.KEYWORD
+    )
 
     # 2. Add Text
     sample_text = "This is a sample document about AI."

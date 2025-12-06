@@ -12,9 +12,10 @@ from logger import get_logger
 from mongo_db import MongoDB
 from qdrant_db import QdrantDB
 from rag import RAGSystem
+from dotenv import load_dotenv
 
 logger = get_logger(__name__)
-
+load_dotenv()
 
 class UploadService:
     """Upload service for document ingestion."""
@@ -32,21 +33,22 @@ class UploadService:
             mongo_db: MongoDB instance (creates new if None)
             llm_service: LLMService instance (creates new if None)
         """
-        self.qdrant = qdrant_db or QdrantDB()
+        self.qdrant = qdrant_db or QdrantDB(
+            host=os.getenv("QDRANT_HOST"),
+            port=os.getenv("QDRANT_PORT"),
+            grpc_port=os.getenv("QDRANT_GRPC_PORT"),
+            prefer_grpc=False,
+        )
         self.mongo = mongo_db or MongoDB()
         self.llm = llm_service or LLMService()
 
         # Initialize RAGSystem which contains all the chunking and processing logic
-        self.host = os.getenv("QDRANT_HOST")
-        self.port = os.getenv("QDRANT_PORT")
-        self.grpc_port = os.getenv("QDRANT_GRPC_PORT")
-        self.api_key = os.getenv("QDRANT_API_KEY")
         self.rag = RAGSystem(
             collection_name=os.getenv("QDRANT_COLLECTION_NAME"),
-            host=self.host,
-            port=self.port,
-            grpc_port=self.grpc_port,
-            api_key=self.api_key,
+            host=os.getenv("QDRANT_HOST"),
+            port=os.getenv("QDRANT_PORT"),
+            grpc_port=os.getenv("QDRANT_GRPC_PORT"),
+            api_key=os.getenv("QDRANT_API_KEY"),
         )
 
         logger.info("Enhanced Ingestion Service initialized")

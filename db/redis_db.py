@@ -1,7 +1,6 @@
 import json
 import os
 from typing import Any, Callable, Optional
-
 import redis
 from dotenv import load_dotenv
 
@@ -14,9 +13,11 @@ load_dotenv()
 class RedisDB:
     def __init__(
         self,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
+        host,
+        port,
         channel: Optional[str] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
     ):
         """Initializes the Redis client.
 
@@ -24,24 +25,22 @@ class RedisDB:
             host: Redis server host (defaults to REDIS_HOST from .env)
             port: Redis server port (defaults to REDIS_PORT from .env)
             channel: Default channel name (defaults to REDIS_CHANNEL from .env)
+            username: Redis username (defaults to REDIS_USERNAME from .env)
+            password: Redis password (defaults to REDIS_PASSWORD from .env)
         """
-        self.host = host or os.getenv("REDIS_HOST", "localhost")
-        self.port = int(port or os.getenv("REDIS_PORT", 6379))
-        self.channel = channel or os.getenv("REDIS_CHANNEL", "mychannel")
-        self.username = os.getenv("REDIS_USERNAME")
-        self.password = os.getenv("REDIS_PASSWORD")
 
         try:
             self.client = redis.Redis(
-                host=self.host,
-                port=self.port,
+                host=host,
+                port=port,
                 decode_responses=True,
-                username=self.username,
-                password=self.password,
+                username=username,
+                password=password,
             )
+            self.channel = channel
             # Test connection
             self.client.ping()
-            logger.info(f"Connected to Redis at {self.host}:{self.port}")
+            logger.info(f"Connected to Redis at {host}:{port}")
         except redis.ConnectionError as e:
             logger.exception(f"Failed to connect to Redis: {e}")
             raise
@@ -184,7 +183,13 @@ class RedisDB:
 if __name__ == "__main__":
     # Example Usage
     try:
-        redis_db = RedisDB()
+        host = os.getenv("REDIS_HOST", "localhost")
+        port = int(os.getenv("REDIS_PORT", 6379))
+        channel = os.getenv("REDIS_CHANNEL", "ai-service")
+        user = os.getenv("REDIS_USER", "default")
+        password = os.getenv("REDIS_PASSWORD", "")
+
+        redis_db = RedisDB(host, port, channel, user, password)
 
         # Test publish
         redis_db.publish({"message": "Hello from Redis!", "type": "test"})

@@ -1,32 +1,28 @@
 """Main entry point for the RAG system API."""
-
+import re
+import time
 import os
 import shutil
-from typing import List, Optional
-
+from typing import Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 
-from ingestion_service import UploadService
-from llm_gemini import LLMService
-from logger import get_logger
-from question_generation_service import QuestionGenerationService
-from rag import RAGSystem
 from schema import (
     GenerateQuestionsRequest,
     GenerateQuestionsResponse,
     QueryRequest,
     QueryResponse,
-    UploadResponse,
 )
 
+from services import (
+    get_upload_service,
+    get_llm_service,
+    get_question_service,
+    get_rag_system,
+)
+
+from logger import get_logger
 # Initialize logger
 logger = get_logger(__name__)
-
-# Initialize services
-RAG_SYSTEM = None
-LLM_SERVICE = None
-QUESTION_SERVICE = None
-INGESTION_SERVICE = None
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -49,16 +45,6 @@ app = FastAPI(
     docs_url="/docs",  # Swagger UI
     redoc_url="/redoc",  # ReDoc
 )
-
-# Add CORS middleware
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["*"],  # In production, specify actual origins
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
-
 
 # Startup event
 @app.on_event("startup")
@@ -91,46 +77,19 @@ async def shutdown_event():
 
     logger.info("=" * 60)
 
-
-def get_rag_system() -> RAGSystem:
-    """Get or create RAG system instance."""
-    # ... (existing code)
-    global RAG_SYSTEM
-    if RAG_SYSTEM is None:
-        try:
-            collection_name = os.getenv("QDRANT_COLLECTION_NAME")
-            host = os.getenv("QDRANT_HOST")
-            port = os.getenv("QDRANT_PORT")
-            grpc_port = os.getenv("QDRANT_GRPC_PORT")
-            api_key = os.getenv("QDRANT_API_KEY")
-            RAG_SYSTEM = RAGSystem(
-                collection_name=collection_name,
-                host=host,
-                port=port,
-                grpc_port=grpc_port,
-                api_key=api_key,
-            )
-        except Exception as e:
-            logger.exception(f"Failed to connect to Qdrant database: {e}")
-            raise HTTPException(
-                status_code=503,
-                detail=f"Failed to connect to Qdrant database. Please ensure Qdrant is running on localhost:6333. Error: {str(e)}",
-            )
-    return RAG_SYSTEM
-
-
-def get_llm_service() -> LLMService:
-    """Get or create LLM service instance."""
-    global LLM_SERVICE
-    if LLM_SERVICE is None:
-        try:
-            LLM_SERVICE = LLMService()
-        except Exception as e:
-            logger.warning(f"Failed to initialize LLM service: {e}")
-            # We might want to allow running without LLM, just returning docs
-            return None
-    return LLM_SERVICE
-
+# Endpoints
+@app.get("/")
+async def root():
+    """Root endpoint with API information."""
+    return {
+        "message": "RAG System API",
+        "documentation": {"swagger_ui": "/docs", "redoc": "/redoc"},
+        "endpoints": {
+            "POST /upload": "Upload a document (txt, pdf, docx)",
+            "POST /query": "Query the RAG system",
+            "GET /health": "Health check",
+        },
+    }
 
 @app.post("/query", response_model=QueryResponse)
 async def query_documents(request: QueryRequest):
@@ -157,103 +116,6 @@ async def query_documents(request: QueryRequest):
         return QueryResponse(answer=answer, results=results, count=len(results))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
-
-
-# Endpoints
-@app.get("/")
-async def root():
-    """Root endpoint with API information."""
-    return {
-        "message": "RAG System API",
-        "documentation": {"swagger_ui": "/docs", "redoc": "/redoc"},
-        "endpoints": {
-            "POST /upload": "Upload a document (txt, pdf, docx)",
-            "POST /query": "Query the RAG system",
-            "GET /health": "Health check",
-        },
-    }
-
-
-@app.post("/upload", response_model=UploadResponse)
-async def upload_document(
-    file: UploadFile = File(...),
-    class_id: str = Form(..., description="Unique ID for the document"),
-    chapter_id: str = Form(..., description="Chapter or section ID"),
-):
-    """Upload a document to the RAG system.
-
-    Supported formats: .txt, .pdf, .docx
-    """
-    # Validate file extension
-    allowed_extensions = [".txt", ".pdf", ".docx"]
-    file_ext = os.path.splitext(file.filename)[1].lower()
-
-    if file_ext not in allowed_extensions:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}",
-        )
-
-    # Create uploads directory if it doesn't exist
-    upload_dir = "uploads"
-    os.makedirs(upload_dir, exist_ok=True)
-
-    # Save uploaded file
-    file_path = os.path.join(upload_dir, file.filename)
-    try:
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
-
-    # Process with RAG system
-    try:
-        rag = get_rag_system()
-
-        # Add document with metadata
-        chunk_size = rag.add_document(
-            file_path, class_id=class_id, chapter_id=chapter_id
-        )
-
-        return UploadResponse(
-            filename=file.filename,
-            message="Document uploaded and processed successfully",
-            chunks_added=chunk_size,
-        )
-    except Exception as e:
-        # Clean up file if processing fails
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        raise HTTPException(
-            status_code=500, detail=f"Failed to process document: {str(e)}"
-        )
-
-
-def get_question_service() -> QuestionGenerationService:
-    """Get or create Question Generation service instance."""
-    global QUESTION_SERVICE
-    if QUESTION_SERVICE is None:
-        try:
-            QUESTION_SERVICE = QuestionGenerationService()
-            logger.info("Question Generation Service initialized")
-        except Exception as e:
-            logger.warning(f"Failed to initialize Question Generation service: {e}")
-            return None
-    return QUESTION_SERVICE
-
-
-def get_ingestion_service() -> UploadService:
-    """Get or create Enhanced Ingestion service instance."""
-    global INGESTION_SERVICE
-    if INGESTION_SERVICE is None:
-        try:
-            INGESTION_SERVICE = UploadService()
-            logger.info("Enhanced Ingestion Service initialized")
-        except Exception as e:
-            logger.warning(f"Failed to initialize Enhanced Ingestion service: {e}")
-            return None
-    return INGESTION_SERVICE
-
 
 @app.post("/generate-questions", response_model=GenerateQuestionsResponse)
 async def generate_questions(request: GenerateQuestionsRequest):
@@ -294,58 +156,8 @@ async def generate_questions(request: GenerateQuestionsRequest):
             status_code=500, detail=f"Question generation failed: {str(e)}"
         )
 
-
-@app.get("/questions")
-async def get_questions(
-    class_id: str,
-    chapter_id: str,
-    topics: Optional[List[str]] = None,
-    limit: int = 20,
-    mode: str = "or",
-):
-    """Query cached questions from MongoDB.
-
-    - **class_id**: Document identifier
-    - **chapter_id**: Chapter identifier
-    - **topics**: Optional list of topics to filter by
-    - **limit**: Maximum number of questions to return
-    - **mode**: 'or' (any topic) or 'and' (all topics)
-    """
-    try:
-        service = get_question_service()
-        if not service:
-            raise HTTPException(
-                status_code=503, detail="Question service not available"
-            )
-
-        # Use the cache check method
-        if topics:
-            from question_utils import normalize_topics
-
-            normalized_topics = normalize_topics(topics)
-            questions = service._check_cache(
-                class_id, chapter_id, normalized_topics, limit, mode
-            )
-        else:
-            # Get all questions for this document/chapter
-            questions_collection = service.mongo.get_questions_collection()
-            results = questions_collection.find(
-                {"class_id": class_id, "chapter_id": chapter_id}
-            ).limit(limit)
-            questions = list(results)
-
-            # Convert ObjectId to string
-            for q in questions:
-                q["_id"] = str(q["_id"])
-
-        return {"questions": questions, "count": len(questions)}
-    except Exception as e:
-        logger.exception(f"Question query failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Question query failed: {str(e)}")
-
-
-@app.post("/ingest-enhanced")
-async def ingest_enhanced(
+@app.post("/upload")
+async def upload_document(
     file: UploadFile = File(...),
     class_id: Optional[str] = Form(None),
     chapter_id: Optional[str] = Form(None),
@@ -369,8 +181,6 @@ async def ingest_enhanced(
     - **class_name**: Name of the class (e.g., "Class 10")
     - **subject_name**: Name of the subject (e.g., "Physics")
     """
-    import re
-    import time
 
     # Validate file extension
     allowed_extensions = [".txt", ".pdf", ".docx"]
@@ -405,7 +215,7 @@ async def ingest_enhanced(
         logger.info(f"Auto-generated subject_id: {subject_id}")
 
     # Create uploads directory
-    upload_dir = "uploads"
+    upload_dir = "/tmp/uploads"
     os.makedirs(upload_dir, exist_ok=True)
 
     # Save file
@@ -418,13 +228,13 @@ async def ingest_enhanced(
 
     # Process with enhanced ingestion
     try:
-        service = get_ingestion_service()
+        service = get_upload_service()
         if not service:
             raise HTTPException(
-                status_code=503, detail="Ingestion service not available"
+                status_code=503, detail="Upload service not available"
             )
 
-        result = service.ingest_document(
+        result = service.upload_document(
             file_path=file_path,
             class_id=class_id,
             chapter_id=chapter_id,
@@ -450,6 +260,4 @@ async def health_check():
     """Health check endpoint."""
     return {
         "status": "healthy",
-        "rag_initialized": RAG_SYSTEM is not None,
-        "question_service_initialized": QUESTION_SERVICE is not None,
     }
