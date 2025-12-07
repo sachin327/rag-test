@@ -1,15 +1,15 @@
-import json
 import os
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from qdrant_client.http import models
 
 from document.document_loader import DocumentLoader
 from llm.llm_open_router import LLMService
 from logger import get_logger
 from db.qdrant_db import QdrantDB
-from utils.common import timing_decorator
-from utils.prompt import PromptService
+
+# from utils.common import timing_decorator
+from utils.response_format import ResponseSchema, JsonSchema, SummaryResponse
 
 # Initialize logger
 logger = get_logger(__name__)
@@ -22,8 +22,8 @@ class RAGSystem:
     def __init__(
         self,
         collection_name: str = os.getenv("QDRANT_COLLECTION_NAME"),
-        chunk_size: int = os.getenv("QDRANT_CHUNK_SIZE"),
-        chunk_overlap: int = os.getenv("QDRANT_CHUNK_OVERLAP"),
+        chunk_size: int = int(os.getenv("QDRANT_CHUNK_SIZE", 512)),
+        chunk_overlap: int = int(os.getenv("QDRANT_CHUNK_OVERLAP", 100)),
     ):
         """Initializes the RAG system with Qdrant DB.
 
@@ -41,16 +41,17 @@ class RAGSystem:
         self.db = QdrantDB(
             host=os.getenv("QDRANT_HOST"),
             port=os.getenv("QDRANT_PORT"),
-            grpc_port=os.getenv("QDRANT_GRPC_PORT"),
             prefer_grpc=False,
             api_key=os.getenv("QDRANT_API_KEY"),
-            vector_size=os.getenv("QDRANT_VECTOR_SIZE"),
+            vector_size=384,  # Fixed for all-MiniLM-L6-v2
         )
 
         # Create collection (512 is the vector size for all-MiniLM-L6-v2)
         self.db.create_collection(self.collection_name)
 
-    def split_chunks(self, text: str) -> List[str]:
+    def split_chunks(
+        self, text: str, chunk_size: int = 512, overlap: int = 100
+    ) -> List[str]:
         """Splits text into chunks with overlap.
 
         Args:
@@ -69,7 +70,7 @@ class RAGSystem:
         text_length = len(text)
 
         while start < text_length:
-            end = min(start + self.chunk_size, text_length)
+            end = min(start + chunk_size, text_length)
 
             # Extend to sentence boundary if possible
             if end < text_length:
@@ -88,157 +89,33 @@ class RAGSystem:
 
             # Move start position considering overlap
             if end < text_length:
-                start = end - self.chunk_overlap
+                start = end - overlap
             else:
                 start = text_length
 
         return chunks
 
-    def generate_chunk_summary(
+    def build_summary_context(
         self,
         text: str,
-        chapter_name: str = "",
-        class_name: str = "",
-        subject_name: str = "",
-    ) -> str:
-        """Generates a short summary (around 200 words) for a large chunk using
-        LLM.
-
-        Args:
-            text: Text chunk (up to 4000 chars)
-            chapter_name: Name of the chapter (optional context)
-            class_name: Name of the class (optional context)
-            subject_name: Name of the subject (optional context)
-
-        Returns:
-            Summary text (around 200 words)
-        """
-        # Build context string
+        metadata: Dict[str, Any] = None,
+    ):
+        # Build context string from metadata
         context_parts = []
-        if subject_name:
-            context_parts.append(f"Subject: {subject_name}")
-        if class_name:
-            context_parts.append(f"Class: {class_name}")
-        if chapter_name:
-            context_parts.append(f"Chapter: {chapter_name}")
+        if metadata:
+            for key, value in metadata.items():
+                # Format key to be more readable (e.g., "subject_name" -> "Subject Name")
+                readable_key = key.replace("_", " ").title()
+                context_parts.append(f"{readable_key}: {value}")
 
-        context_str = (
-            "\n".join(context_parts) if context_parts else "General educational content"
-        )
+        context_str = "\n".join(context_parts) if context_parts else "General content"
 
-        system_prompt = f"""You are analyzing educational content with the following context:
-{context_str}
+        return context_str + "\nText: " + text
 
-Provide concise summaries focused on the main concepts relevant to this subject and chapter."""
-
-        user_prompt = PromptService.get_rag_summary_prompt(text=text)
-
-        try:
-            summary = self.llm_service.get_response(
-                system_prompt=system_prompt, user_prompt=user_prompt
-            )
-            logger.debug(f"Generated summary: {len(summary)} chars")
-            return summary.strip()
-        except Exception as e:
-            logger.warning(f"Failed to generate summary with LLM: {e}")
-            # Fallback: return first 200 words
-            words = text.split()[:200]
-            return " ".join(words)
-
-    def generate_final_summary_and_topics(
-        self,
-        combined_summaries: str,
-        chapter_name: str = "",
-        class_name: str = "",
-        subject_name: str = "",
-    ) -> Dict[str, any]:
-        """Generates final summary and topic list from concatenated summaries.
-
-        Args:
-            combined_summaries: All chunk summaries concatenated
-            chapter_name: Name of the chapter (optional context)
-            class_name: Name of the class (optional context)
-            subject_name: Name of the subject (optional context)
-
-        Returns:
-            Dictionary with 'final_summary' and 'topic_keys' (5-6 topics)
-        """
-        # Build context string
-        context_parts = []
-        if subject_name:
-            context_parts.append(f"Subject: {subject_name}")
-        if class_name:
-            context_parts.append(f"Class: {class_name}")
-        if chapter_name:
-            context_parts.append(f"Chapter: {chapter_name}")
-
-        context_str = (
-            "\n".join(context_parts) if context_parts else "General educational content"
-        )
-
-        system_prompt = f"""You are analyzing educational content with the following context:
-{context_str}
-
-Generate comprehensive summaries and extract relevant topics for this subject."""
-
-        user_prompt = f"""Analyze the following summaries from this document and provide:
-1. A comprehensive final summary (around 300 words) that captures the essence of this chapter
-2. A list of 5-6 key topics that cover the main themes relevant to this subject
-
-Summaries:
-{combined_summaries[:8000]}
-
-Return ONLY a JSON object with:
-- "final_summary": comprehensive summary of the entire document tailored to the {subject_name} subject and {chapter_name} chapter
-- "topic_keys": array of exactly 5-6 topic labels (lowercase, 1-3 words each) relevant to {subject_name}
-
-Example:
-{{"final_summary": "This document covers...", "topic_keys": ["photosynthesis", "cell_structure", "plant_biology", "chloroplast_function", "energy_conversion"]}}
-
-JSON:"""
-
-        try:
-            response = self.llm_service.get_response(
-                system_prompt=system_prompt, user_prompt=user_prompt
-            )
-
-            # Parse JSON from response
-            response_text = response.strip()
-            if response_text.startswith("```"):
-                response_text = response_text.split("```")[1]
-                if response_text.startswith("json"):
-                    response_text = response_text[4:]
-
-            result = json.loads(response_text.strip())
-
-            # Normalize topics
-            if "topic_keys" in result:
-                result["topic_keys"] = [
-                    t.lower().strip().replace(" ", "_")
-                    for t in result.get("topic_keys", [])
-                ]
-
-            # Ensure we have 5-6 topics
-            if len(result.get("topic_keys", [])) < 5:
-                logger.warning(
-                    f"Only got {len(result.get('topic_keys', []))} topics, expected 5-6"
-                )
-
-            return result
-
-        except Exception as e:
-            logger.warning(f"Failed to generate final summary/topics with LLM: {e}")
-            return {"final_summary": combined_summaries[:500] + "...", "topic_keys": []}
-
-    def upload_document(
+    def add_document(
         self,
         file_path: str,
-        class_id: str,
-        class_name: str,
-        chapter_id: str,
-        chapter_name: str,
-        subject_id: str,
-        subject_name: str,
+        metadata: Dict[str, Any],
     ) -> Dict:
         """
         Ingests a document with enhanced metadata extraction using multi-stage processing:
@@ -248,18 +125,12 @@ JSON:"""
 
         Args:
             file_path: Path to document file
-            class_id: Unique document identifier
-            chapter_id: Chapter identifier
-            chapter_name: Name of the chapter
-            class_name: Name of the class
-            subject_id: ID of the subject
-            subject_name: Name of the subject
+            metadata: Dictionary containing document metadata (e.g., class_name, subject_name)
 
         Returns:
-            Dictionary with ingestion statistics
+            Dictionary with upload document information
         """
-        logger.info(f"Starting enhanced ingestion for {file_path}")
-        start_time = time.time()
+        logger.info(f"Starting add document for {file_path}")
 
         # Step 1: Load document
         raw_text = DocumentLoader.load_document(file_path)
@@ -270,138 +141,132 @@ JSON:"""
 
         logger.info(f"Loaded document: {len(raw_text)} chars")
 
-        # Step 2: Chunk into 4000 char chunks for summary generation
-        large_chunks = self.split_chunks(raw_text)
-        logger.info(f"Created {len(large_chunks)} large chunks (4000 chars each)")
-
-        # Step 3: Generate summary for each large chunk
-        chunk_summaries = []
-        for i, chunk in enumerate(large_chunks):
-            logger.info(f"Generating summary for chunk {i + 1}/{len(large_chunks)}")
-            summary = self.generate_chunk_summary(
-                chunk,
-                chapter_name=chapter_name,
-                class_name=class_name,
-                subject_name=subject_name,
+        # Step 2: Generate summary and topics
+        summary_response_schema = ResponseSchema(
+            json_schema=JsonSchema(
+                name="summary",
+                schema_=SummaryResponse.model_json_schema(),
             )
-            chunk_summaries.append(summary)
-
-        # Step 4: Concatenate all summaries
-        combined_summaries = "\n\n".join(chunk_summaries)
-        logger.info(f"Combined summaries: {len(combined_summaries)} chars")
-
-        # Step 5: Generate final summary and topics list (5-6 topics)
-        logger.info("Generating final summary and topics list")
-        final_metadata = self.generate_final_summary_and_topics(
-            combined_summaries,
-            chapter_name=chapter_name,
-            class_name=class_name,
-            subject_name=subject_name,
         )
-        final_summary = final_metadata.get("final_summary", "")
-        topic_keys = final_metadata.get("topic_keys", [])
+        if len(raw_text) < 4000:
+            logger.info(
+                "Document is small (< 4000 chars), generating summary directly."
+            )
+            final_summary = ""
+            topic_keys = []
+            for event in self.llm_service.generate_summary(
+                raw_text,
+                want_topics=True,
+                is_final=True,
+                response_schema=summary_response_schema,
+            ):
+                response = event.get("response", {})
+                final_summary = response.get("summary", "")
+                topic_keys = response.get("topics", [])
+            logger.info(f"Generated {len(topic_keys)} topics: {topic_keys}")
+            logger.info(f"Final summary: {len(final_summary)} chars")
+        else:
+            # Chunk into 4000 char chunks for summary generation
+            large_chunks = self.split_chunks(raw_text, 4000, 100)
+            logger.info(f"Created {len(large_chunks)} large chunks (4000 chars each)")
 
-        logger.info(f"Generated {len(topic_keys)} topics: {topic_keys}")
-        logger.info(f"Final summary: {len(final_summary)} chars")
+            # Generate summary for each large chunk
+            chunk_summaries = []
+            chunk_topics = []
+            for i, chunk in enumerate(large_chunks):
+                logger.info(f"Generating summary for chunk {i + 1}/{len(large_chunks)}")
+                for event in self.llm_service.generate_summary(
+                    chunk,
+                    want_topics=True,
+                    is_final=False,
+                    response_schema=summary_response_schema,
+                ):
+                    # logger.debug(event)
+                    response = event.get("response", {})
+                    chunk_summaries.append(response.get("summary", ""))
+                    chunk_topics.append(
+                        "\n".join(topic["name"] for topic in response.get("topics", []))
+                    )
+
+            # Concatenate all summaries and topics
+            combined_summaries = "\n\n".join(chunk_summaries)
+            combined_topics = "\n".join(chunk_topics)
+            logger.info(f"Combined summaries: {len(combined_summaries)} chars")
+            logger.info(f"Combined topics: {len(combined_topics)} chars")
+
+            # logger.debug(combined_summaries)
+            # logger.debug(combined_topics)
+
+            # Generate final summary and topics list (5-6 topics)
+            logger.info("Generating final summary and topics list")
+            final_summary = ""
+            topic_keys = []
+            for event in self.llm_service.generate_summary(
+                combined_summaries,
+                want_topics=True,
+                is_final=True,
+                response_schema=summary_response_schema,
+            ):
+                # logger.debug(event)
+                response = event.get("response", {})
+                final_summary = response.get("summary", "")
+                topic_keys = response.get("topics", [])
+
+            logger.info(f"Generated {len(topic_keys)} topics: {topic_keys}")
+            logger.info(f"Final summary: {len(final_summary)} chars")
 
         # Step 6: Re-chunk into 512 chars with 100 char overlap for Qdrant storage
-        storage_chunks = self.chunk_with_overlap(raw_text, chunk_size=512, overlap=100)
+        storage_chunks = self.split_chunks(
+            raw_text, chunk_size=self.chunk_size, overlap=self.chunk_overlap
+        )
         logger.info(
-            f"Created {len(storage_chunks)} storage chunks (512 chars with 100 overlap)"
+            f"Created {len(storage_chunks)} storage chunks ({self.chunk_size} chars with {self.chunk_overlap} overlap)"
         )
 
         # Step 7: Prepare chunks for storage with metadata
         for i, chunk_text in enumerate(storage_chunks):
             # Count tokens (simple approximation: split by whitespace)
-            token_count = len(chunk_text.split())
+            words_count = len(chunk_text.split())
 
-            chunk_data = {
-                "chapter_name": chapter_name,
-                "class_name": class_name,
-                "subject_name": subject_name,
-                "index": i,
-                "text": chunk_text,
-                "topic_keys": topic_keys,  # Use the global topics from LLM
-                "source_file": os.path.basename(file_path),
-                "created_at": time.time(),
-                # Additional metadata for backwards compatibility
-                "subject_id": subject_id,
-                "class_id": class_id,
-                "chapter_id": chapter_id,
-                "token_count": token_count,
-                "sentence_count": chunk_text.count("."),
-            }
+            # Base payload from metadata
+            chunk_data = metadata.copy()
 
-            self.db.add_text(collection_name, chunk_text, payload=chunk_data)
+            # Add system fields
+            chunk_data.update(
+                {
+                    "index": i,
+                    "text": chunk_text,
+                    "topic_keys": topic_keys,  # Use the global topics from LLM
+                    "source_file": os.path.basename(file_path),
+                    "summary": final_summary,
+                    "created_at": time.time(),
+                    "words_count": words_count,
+                    "sentence_count": chunk_text.count("."),
+                }
+            )
 
-        elapsed = time.time() - start_time
-        logger.info(f"Ingestion completed in {elapsed:.2f}s")
+            self.db.add_text(self.collection_name, chunk_text, payload=chunk_data)
+
+        topic_flags_mongo = []
+        for topic in topic_keys:
+            topic_flags_mongo.append(True)
 
         return {
             "success": True,
-            "class_id": class_id,
-            "chapter_id": chapter_id,
-            "chapter_name": chapter_name,
-            "class_name": class_name,
-            "subject_id": subject_id,
-            "subject_name": subject_name,
+            "metadata": metadata,
             "chunks_processed": len(storage_chunks),
             "topics_extracted": len(topic_keys),
             "topic_keys": topic_keys,
+            "topic_flags_mongo": topic_flags_mongo,
             "summary": final_summary,
             "summary_length": len(final_summary),
-            "elapsed_time": elapsed,
         }
 
-    @timing_decorator
-    def add_document(self, file_path: str, class_id: str, chapter_id: str):
-        """Loads a document, chunks it (extend-to-sentence), and adds it to
-        Qdrant.
-
-        Args:
-            file_path: Path to the document file.
-            class_id: Unique ID for the document.
-            chapter_id: ID for the specific chapter/section.
-        """
-        # Load document
-        raw_text = DocumentLoader.load_document(file_path)
-
-        if not raw_text:
-            logger.warning(f"No text loaded from {file_path}")
-            return 0
-
-        # Split into chunks (Extend-to-Sentence Mode)
-        text_chunks = self._split_text_into_chunks(raw_text)
-
-        # Current timestamp for all chunks in this batch
-        timestamp = time.time()
-
-        # Add each chunk to Qdrant with rich metadata
-        for i, chunk in enumerate(text_chunks):
-            payload = {
-                "source_file": os.path.basename(file_path),
-                "class_id": class_id,
-                "chapter_id": chapter_id,
-                "chunk_index": i,
-                "timestamp": timestamp,
-                "total_chunks": len(text_chunks),
-                "chunk_mode": "extend_to_sentence",
-            }
-            self.db.add_text(self.collection_name, chunk, payload=payload)
-
-        logger.info(
-            f"Added {len(text_chunks)} chunks from {file_path} (Doc ID: {class_id}, Chapter: {chapter_id})"
-        )
-
-        return len(text_chunks)
-
-    @timing_decorator
     def search(
         self,
         query: str,
         limit: int = 5,
-        class_id: Optional[str] = None,
-        chapter_id: Optional[str] = None,
+        filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict]:
         """Searches for relevant text chunks using a query and optional
         filters.
@@ -409,8 +274,7 @@ JSON:"""
         Args:
             query: The search query text.
             limit: Number of results to return.
-            class_id: Optional filter by document ID.
-            chapter_id: Optional filter by chapter ID.
+            filters: Dictionary of metadata filters (key=value).
 
         Returns:
             List of search results with scores and metadata.
@@ -418,19 +282,11 @@ JSON:"""
         filter_conditions = None
         must_conditions = []
 
-        if class_id:
-            must_conditions.append(
-                models.FieldCondition(
-                    key="class_id", match=models.MatchValue(value=class_id)
+        if filters:
+            for key, value in filters.items():
+                must_conditions.append(
+                    models.FieldCondition(key=key, match=models.MatchValue(value=value))
                 )
-            )
-
-        if chapter_id:
-            must_conditions.append(
-                models.FieldCondition(
-                    key="chapter_id", match=models.MatchValue(value=chapter_id)
-                )
-            )
 
         if must_conditions:
             filter_conditions = models.Filter(must=must_conditions)
@@ -449,16 +305,20 @@ JSON:"""
 
 
 if __name__ == "__main__":
-    rag = RAGSystem()
+    rag = RAGSystem(collection_name="test_collection")
 
     # Add a document (Example usage needs update for new signature)
-    # rag.add_document("data/sample.txt", "doc_1", "chap_1")
+    result = rag.add_document(
+        "data/iesc101.pdf", metadata={"class_name": "class_2", "subject_name": "subj_2"}
+    )
+    logger.info("\n--- Add Document Result ---")
+    logger.info(result)
 
     # Search
-    results = rag.search("sample query", limit=3)
-    logger.info("\n--- Search Results ---")
-    for result in results:
-        logger.info(f"Score: {result['score']:.4f}")
-        logger.info(f"Text: {result['payload']['text'][:100]}...")
-        logger.info(f"Metadata: {result['payload']}")
-        logger.info("")
+    # results = rag.search("Newtons law", limit=3)
+    # logger.info("\n--- Search Results ---")
+    # for result in results:
+    #     logger.info(f"Score: {result['score']:.4f}")
+    #     logger.info(f"Text: {result['payload']['text'][:100]}...")
+    #     logger.info(f"Metadata: {result['payload']}")
+    #     logger.info("")

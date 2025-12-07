@@ -1,5 +1,6 @@
 from typing import List, Dict
 
+
 class PromptService:
     @staticmethod
     def get_rag_system_prompt() -> str:
@@ -25,7 +26,7 @@ Instructions:
                 for chunk in context_chunks
             ]
         )
-        
+
         return f"""Context Data:
 {context_text}
 
@@ -33,21 +34,32 @@ Question: {query}
 """
 
     @staticmethod
-    def get_rag_summary_prompt(text: str) -> str:
-        return f"""Analyze the following text and provide a concise summary in approximately 200 words.
+    def get_summary_system_prompt() -> str:
+        return """
+Analyze the following text and provide a concise summary in approximately 200 words.
 Focus on the main concepts, key points, and important information relevant to this subject and chapter.
-
-Text:
-{text}
-
-Summary (around 200 words):
 """
 
     @staticmethod
-    def get_rag_final_summary_prompt(text: str) -> str:
-        return f"""You are analyzing educational content with the following context:
-{text}
-
-Generate comprehensive summaries and extract relevant topics for this subject.
+    def get_final_summary_system_prompt() -> str:
+        return """Your task is to generate a final summary from the given chunks of summaries.
+Try to preserrve the original meaning and context of the text.
+Also the important points should be included in the final summary.
 """
 
+    @staticmethod
+    def get_summary_topic_prompt() -> str:
+        return """Your task is to generate summary and a topic list from the given text.
+Try to preserrve the original meaning and context of the text.
+Also the important points should be included in the summary.
+For topics use standard educational topic names. should not be very long.
+"""
+
+    @staticmethod
+    def get_final_summary_topic_prompt() -> str:
+        return """Your task is to generate a final summary from the given chunks of summaries.
+Try to preserrve the original meaning and context of the text.
+Also the important points should be included in the final summary.
+Also the final topic list should be generated from the given topic list.
+For final topics use standard educational topic names. should not be very long.
+"""

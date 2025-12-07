@@ -4,8 +4,8 @@ from pydantic import BaseModel, Field
 
 class JsonSchema(BaseModel):
     name: str
-    description: str | None = None
-    schema: Dict[str, Any]
+    strict: bool = True
+    schema_: Dict[str, Any]
 
 
 class ResponseSchema(BaseModel):
@@ -38,8 +38,7 @@ if __name__ == "__main__":
     response_schema = ResponseSchema(
         json_schema=JsonSchema(
             name="summary",
-            description="Get summary of input",
-            schema=SummaryResponse.model_json_schema(),
+            schema_=SummaryResponse.model_json_schema(),
         )
     )
     print(response_schema.model_dump())

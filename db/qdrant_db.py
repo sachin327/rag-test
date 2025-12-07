@@ -47,7 +47,6 @@ class QdrantDB:
         self._model = None
         self.vector_size = vector_size
 
-    @timing_decorator
     def create_collection(
         self,
         collection_name: str,
@@ -74,7 +73,6 @@ class QdrantDB:
         except Exception as e:
             logger.exception(f"Error creating collection '{collection_name}': {e}")
 
-    @timing_decorator
     def create_payload_index(
         self,
         collection_name: str,
@@ -102,7 +100,6 @@ class QdrantDB:
                 f"Error creating index for field '{field_name}' in '{collection_name}': {e}"
             )
 
-    @timing_decorator
     def add_text(
         self, collection_name: str, text: str, payload: Optional[Dict[str, Any]] = None
     ):
@@ -130,11 +127,10 @@ class QdrantDB:
                 collection_name=collection_name,
                 points=[models.PointStruct(id=point_id, vector=embd, payload=payload)],
             )
-            logger.debug(f"Added text to '{collection_name}' with ID {point_id}")
+            # logger.debug(f"Added text to '{collection_name}' with ID {point_id}")
         except Exception as e:
             logger.exception(f"Error adding text to '{collection_name}': {e}")
 
-    @timing_decorator
     def search_by_text(
         self,
         collection_name: str,
@@ -173,7 +169,6 @@ class QdrantDB:
             logger.exception(f"Error searching in '{collection_name}': {e}")
             return []
 
-    @timing_decorator
     def search_by_filter(
         self, collection_name: str, filter_conditions: models.Filter, limit: int = 10
     ) -> List[Dict]:

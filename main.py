@@ -1,4 +1,5 @@
 """Main entry point for the RAG system API."""
+
 import re
 import time
 import os
@@ -6,21 +7,19 @@ import shutil
 from typing import Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 
-from schema import (
+from utils.schema import (
     GenerateQuestionsRequest,
     GenerateQuestionsResponse,
     QueryRequest,
     QueryResponse,
 )
 
-from services import (
+from services.service import (
     get_upload_service,
-    get_llm_service,
-    get_question_service,
-    get_rag_system,
 )
 
 from logger import get_logger
+
 # Initialize logger
 logger = get_logger(__name__)
 
@@ -46,6 +45,7 @@ app = FastAPI(
     redoc_url="/redoc",  # ReDoc
 )
 
+
 # Startup event
 @app.on_event("startup")
 async def startup_event():
@@ -67,15 +67,9 @@ async def startup_event():
 async def shutdown_event():
     """Run on application shutdown."""
     logger.info("=" * 60)
-    logger.info("🛑 RAG System API Stopping...")
-
-    global RAG_SYSTEM
-    if RAG_SYSTEM:
-        logger.info("Closing RAG system connections...")
-        RAG_SYSTEM.close()
-        logger.info("RAG system connections closed.")
-
+    logger.info("🛑 API Stopping...")
     logger.info("=" * 60)
+
 
 # Endpoints
 @app.get("/")
@@ -91,6 +85,7 @@ async def root():
         },
     }
 
+
 @app.post("/query", response_model=QueryResponse)
 async def query_documents(request: QueryRequest):
     """Query the RAG system for relevant documents and generate an answer."""
@@ -98,7 +93,7 @@ async def query_documents(request: QueryRequest):
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
     try:
-        rag = get_rag_system()
+        rag = None
         results = rag.search(
             request.query,
             limit=request.limit,
@@ -108,7 +103,7 @@ async def query_documents(request: QueryRequest):
 
         # Generate answer using LLM
         answer = None
-        llm = get_llm_service()
+        llm = None
         if llm:
             # Use streaming method to print to console while generating
             answer = llm.generate_response_stream(request.query, results)
@@ -116,6 +111,7 @@ async def query_documents(request: QueryRequest):
         return QueryResponse(answer=answer, results=results, count=len(results))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+
 
 @app.post("/generate-questions", response_model=GenerateQuestionsResponse)
 async def generate_questions(request: GenerateQuestionsRequest):
@@ -128,7 +124,7 @@ async def generate_questions(request: GenerateQuestionsRequest):
     - **mode**: 'or' (any topic) or 'and' (all topics)
     """
     try:
-        service = get_question_service()
+        service = None
         if not service:
             raise HTTPException(
                 status_code=503, detail="Question generation service not available"
@@ -156,7 +152,8 @@ async def generate_questions(request: GenerateQuestionsRequest):
             status_code=500, detail=f"Question generation failed: {str(e)}"
         )
 
-@app.post("/upload")
+
+@app.post("/upload-document")
 async def upload_document(
     file: UploadFile = File(...),
     class_id: Optional[str] = Form(None),
@@ -230,18 +227,16 @@ async def upload_document(
     try:
         service = get_upload_service()
         if not service:
-            raise HTTPException(
-                status_code=503, detail="Upload service not available"
-            )
+            raise HTTPException(status_code=503, detail="Upload service not available")
 
         result = service.upload_document(
             file_path=file_path,
             class_id=class_id,
+            class_name=class_name,
             chapter_id=chapter_id,
             chapter_name=chapter_name,
-            class_name=class_name,
-            subject_name=subject_name,
             subject_id=subject_id,
+            subject_name=subject_name,
         )
 
         return result

@@ -1,11 +1,11 @@
 import os
-import json
-from typing import List, Generator, Any
+from typing import List, Generator, Any, Dict
 import requests
 from dotenv import load_dotenv
 
-from utils.logger import get_logger
+from logger import get_logger
 from services.llm_service import LLMService as BaseLLMService
+from utils.common import safe_str_to_json
 
 logger = get_logger(__name__)
 load_dotenv()
@@ -36,9 +36,7 @@ class LLMService(BaseLLMService):
                 "Authorization": f"Bearer {self.api_key}",
             }
             # Just checking if we can reach the endpoint
-            response = requests.get(
-                "https://openrouter.ai/api/v1/models", headers=headers, timeout=10
-            )
+            response = requests.get(self.base_url, headers=headers, timeout=10)
             return response.ok
         except Exception as e:
             logger.error(f"Health check failed: {e}")
@@ -52,13 +50,13 @@ class LLMService(BaseLLMService):
         tools: List[Any] = None,
         response_schema: Any = None,
         **kwargs,
-    ) -> str | Generator:
+    ) -> Dict[str, Any] | Generator:
         """Generates a response using OpenRouter."""
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/ai-service",  # Required by OpenRouter
+            "HTTP-Referer": os.getenv("GITHUB_REPO_URL"),  # Required by OpenRouter
         }
 
         payload = {
@@ -78,9 +76,9 @@ class LLMService(BaseLLMService):
         if response_schema:
             payload["response_format"] = response_schema.model_dump()
 
-        # print("payload", payload)
-
         try:
+            # logger.debug("Generating response -- Open Router")
+            # logger.debug(f"Payload: {payload}")
             response = requests.post(
                 self.base_url,
                 headers=headers,
@@ -95,17 +93,22 @@ class LLMService(BaseLLMService):
 
             if not stream:
                 event = response.json()
-                # print("event", event)
                 finish_reason = event["choices"][0]["finish_reason"]
                 if finish_reason and finish_reason == "tool_calls":
                     yield {
-                        "response": event["choices"][0]["message"]["content"],
-                        "tool_calls": event["choices"][0]["message"]["tool_calls"],
+                        "response": safe_str_to_json(
+                            event["choices"][0]["message"]["content"]
+                        ),
+                        "tool_calls": safe_str_to_json(
+                            event["choices"][0]["message"]["tool_calls"]
+                        ),
                         "finish_reason": finish_reason,
                     }
                 else:
                     yield {
-                        "response": event["choices"][0]["message"]["content"],
+                        "response": safe_str_to_json(
+                            event["choices"][0]["message"]["content"]
+                        ),
                         "finish_reason": finish_reason,
                     }
                 return
@@ -119,18 +122,22 @@ class LLMService(BaseLLMService):
                 if data_str == "[DONE]":
                     break
 
-                event = json.loads(data_str)
-                # print("event-stream", event)
                 finish_reason = event["choices"][0]["finish_reason"]
                 if finish_reason and finish_reason == "tool_calls":
                     yield {
-                        "response": event["choices"][0]["delta"]["content"],
-                        "tool_calls": event["choices"][0]["delta"]["tool_calls"],
+                        "response": safe_str_to_json(
+                            event["choices"][0]["delta"]["content"]
+                        ),
+                        "tool_calls": safe_str_to_json(
+                            event["choices"][0]["delta"]["tool_calls"]
+                        ),
                         "finish_reason": finish_reason,
                     }
                 else:
                     yield {
-                        "response": event["choices"][0]["delta"]["content"],
+                        "response": safe_str_to_json(
+                            event["choices"][0]["delta"]["content"]
+                        ),
                         "finish_reason": finish_reason,
                     }
 
@@ -162,7 +169,7 @@ if __name__ == "__main__":
         test_response_schema = ResponseSchema(
             json_schema=JsonSchema(
                 name="summary",
-                description="Get summary of input",
+                description="Get summary and topics of input text",
                 schema=SummaryResponse.model_json_schema(),
             )
         )
