@@ -77,7 +77,7 @@ class LLMService(BaseLLMService):
             payload["response_format"] = response_schema.model_dump()
 
         try:
-            # logger.debug("Generating response -- Open Router")
+            logger.debug("Generating response -- Open Router")
             # logger.debug(f"Payload: {payload}")
             response = requests.post(
                 self.base_url,
@@ -93,6 +93,7 @@ class LLMService(BaseLLMService):
 
             if not stream:
                 event = response.json()
+                # logger.debug(event)
                 finish_reason = event["choices"][0]["finish_reason"]
                 if finish_reason and finish_reason == "tool_calls":
                     yield {

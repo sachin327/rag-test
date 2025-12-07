@@ -5,6 +5,7 @@ from logger import get_logger
 load_dotenv()
 logger = get_logger(__name__)
 
+
 class Embedding:
     def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
         self.model_name = model_name
@@ -14,7 +15,6 @@ class Embedding:
 
     def init_model(self):
         """Load the embedding model."""
-            
 
         logger.info(f"Loading Embd model '{self.model_name}'...")
 
@@ -38,9 +38,7 @@ class Embedding:
 
             self._model = TextEmbedding()
             self._model_type = "fastembed"
-            logger.info(
-                "Loaded default FastEmbed model (BAAI/bge-small-en-v1.5)."
-            )
+            logger.info("Loaded default FastEmbed model (BAAI/bge-small-en-v1.5).")
         except ImportError:
             logger.info(
                 "FastEmbed not installed. For faster loading, install it: pip install fastembed"
@@ -48,9 +46,7 @@ class Embedding:
             logger.info("Falling back to SentenceTransformers...")
             self._load_sentence_transformer()
         except Exception as e:
-            logger.error(
-                f"Error loading embedding model: {e}"
-            )
+            logger.error(f"Error loading embedding model: {e}")
             raise e
 
         return self._model
@@ -79,5 +75,6 @@ class Embedding:
             return list(self._model.embed(texts))
         else:
             return self._model.encode(texts).tolist()
+
 
 embedding = Embedding()

@@ -51,7 +51,8 @@ Also the important points should be included in the final summary.
     def get_summary_topic_prompt() -> str:
         return """Your task is to generate summary and a topic list from the given text.
 Try to preserrve the original meaning and context of the text.
-Also the important points should be included in the summary.
+Output should be following the given response_schema.
+Also the final topic list should be generated from the given topic list.
 For topics use standard educational topic names. should not be very long.
 """
 
@@ -59,7 +60,7 @@ For topics use standard educational topic names. should not be very long.
     def get_final_summary_topic_prompt() -> str:
         return """Your task is to generate a final summary from the given chunks of summaries.
 Try to preserrve the original meaning and context of the text.
-Also the important points should be included in the final summary.
+Output should be following the given response_schema.
 Also the final topic list should be generated from the given topic list.
-For final topics use standard educational topic names. should not be very long.
+For topics use standard educational topic names. should not be very long.
 """

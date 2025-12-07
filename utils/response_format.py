@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 class JsonSchema(BaseModel):
     name: str
     strict: bool = True
-    schema_: Dict[str, Any]
+    schema: Dict[str, Any]
 
 
 class ResponseSchema(BaseModel):
@@ -14,14 +14,15 @@ class ResponseSchema(BaseModel):
 
 
 class Topic(BaseModel):
-    name: str = Field(..., description="Name of the topic")
+    name: str = Field(..., description="Name of the topic, short and concise")
     relevance: float = Field(..., description="Relevance score (0-1)")
 
 
 class SummaryResponse(BaseModel):
     summary: str = Field(..., description="A concise summary of the content")
     topics: List[Topic] = Field(
-        default_factory=list, description="List of key topics extracted"
+        default_factory=list,
+        description="List of key topics extracted, not more than 6",
     )
     importance_score: float = Field(..., description="Overall importance score (0-1)")
 
@@ -38,7 +39,7 @@ if __name__ == "__main__":
     response_schema = ResponseSchema(
         json_schema=JsonSchema(
             name="summary",
-            schema_=SummaryResponse.model_json_schema(),
+            schema=SummaryResponse.model_json_schema(),
         )
     )
     print(response_schema.model_dump())

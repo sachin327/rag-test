@@ -7,9 +7,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from qdrant_client.http.models import Distance, VectorParams
 from utils.embedding import embedding
-
 from logger import get_logger
-from utils.common import timing_decorator
 
 load_dotenv()
 logger = get_logger(__name__)

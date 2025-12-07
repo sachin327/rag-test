@@ -10,6 +10,7 @@ class GenerateQuestionsRequest(BaseModel):
     """Request model for question generation."""
 
     class_id: str
+    subject_id: str
     chapter_id: str
     topics: List[str]
     n: int = 10

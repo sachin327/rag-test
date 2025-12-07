@@ -4,9 +4,12 @@ Uses RAGSystem from rag.py for all chunking, summarization, and
 ingestion functionality.
 """
 
+import os
 from logger import get_logger
 from services.rag import RAGSystem
 from dotenv import load_dotenv
+from utils.topic_search import topics_exist_semantic
+from db.mongo_db import MongoDB
 
 logger = get_logger(__name__)
 load_dotenv()
@@ -20,6 +23,26 @@ class UploadService:
         logger.info("Upload Service initialized")
 
         self.rag_service = RAGSystem()
+        self.rag_service.create_payload_index(
+            fields=["class_id", "chapter_id", "subject_id"]
+        )
+        self.mongo = MongoDB(os.getenv("MONGO_URI"), os.getenv("MONGO_DB_NAME"))
+
+    def is_already_exists(
+        self,
+        class_id: str,
+        chapter_id: str,
+        subject_id: str,
+    ):
+        result = self.rag_service.search_by_filter(
+            filters={
+                "class_id": class_id,
+                "chapter_id": chapter_id,
+                "subject_id": subject_id,
+            },
+            limit=1,
+        )
+        return result
 
     def upload_document(
         self,
@@ -46,7 +69,41 @@ class UploadService:
         Returns:
             Dictionary with ingestion statistics
         """
-        return self.rag_service.add_document(
+
+        result = self.is_already_exists(
+            class_id=class_id,
+            chapter_id=chapter_id,
+            subject_id=subject_id,
+        )
+
+        # logger.debug("result: ", result)
+
+        if result:
+            result = result[0]["payload"]
+            topic_flags_mongo = topics_exist_semantic(
+                topics_collection=self.mongo.get_collection("topic-ai-service"),
+                subject_id=subject_id,
+                input_topics=result["topic_keys"],
+                similarity_threshold=0.6,
+            )
+            return {
+                "success": True,
+                "metadata": {
+                    "class_id": class_id,
+                    "chapter_id": chapter_id,
+                    "subject_id": subject_id,
+                    "class_name": class_name,
+                    "chapter_name": chapter_name,
+                    "subject_name": subject_name,
+                },
+                "topics_extracted": len(result["topic_keys"]),
+                "topic_keys": result["topic_keys"],
+                "summary": result["summary"],
+                "summary_length": len(result["summary"]),
+                "topic_flags_mongo": topic_flags_mongo,
+            }
+
+        result = self.rag_service.add_document(
             file_path=file_path,
             metadata={
                 "class_id": class_id,
@@ -57,6 +114,15 @@ class UploadService:
                 "subject_name": subject_name,
             },
         )
+
+        topic_flags_mongo = topics_exist_semantic(
+            topics_collection=self.mongo.get_collection("topic-ai-service"),
+            subject_id=subject_id,
+            input_topics=result["topic_keys"],
+            similarity_threshold=0.6,
+        )
+        result["topic_flags_mongo"] = topic_flags_mongo
+        return result
 
 
 if __name__ == "__main__":

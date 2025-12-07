@@ -1,59 +1,50 @@
 import os
-import re
 from typing import List, Dict, Any
 from pymongo.collection import Collection
-from rapidfuzz import fuzz, process
+import numpy as np
+from db.mongo_db import MongoDB
+from utils.embedding import embedding
+from dotenv import load_dotenv
 from logger import get_logger
 
+load_dotenv()
 logger = get_logger(__name__)
 
 
-def slugify_topic(name: str) -> str:
+def _normalize_embeddings(arr: np.ndarray) -> np.ndarray:
     """
-    Normalize a topic name into a slug for storage/indexing:
-    - lowercase
-    - remove non-alphanumeric characters (except spaces)
-    - collapse whitespace
-    - replace spaces with hyphens
+    L2-normalize a 2D array of embeddings row-wise.
+    Handles zero vectors safely.
     """
-    if not isinstance(name, str):
-        name = str(name)
-
-    name = name.lower().strip()
-    name = re.sub(r"[^a-z0-9\s]", " ", name)
-    name = re.sub(r"\s+", " ", name)
-    return name.replace(" ", "-")
+    norms = np.linalg.norm(arr, axis=1, keepdims=True)
+    # avoid division by zero
+    norms[norms == 0] = 1.0
+    return arr / norms
 
 
-def normalize_for_fuzzy(name: str) -> str:
-    """
-    Normalize text for fuzzy matching:
-    - lowercase
-    - remove punctuation
-    - collapse whitespace
-    """
-    if not isinstance(name, str):
-        name = str(name)
-
-    name = name.lower().strip()
-    name = re.sub(r"[^a-z0-9\s]", " ", name)
-    name = re.sub(r"\s+", " ", name)
-    return name
-
-
-def topics_exist_for_subject(
+def topics_exist_semantic(
     topics_collection: Collection,
     subject_id: str,
     input_topics: List[Dict[str, Any]],
-    similarity_threshold: int = 85,  # be strict
-    logger=None,
+    similarity_threshold: float = 0.8,
 ) -> List[bool]:
     """
-    Check if each input topic already exists for a given subject_id.
-    Returns a list[bool] same length as input_topics.
+    Check if each input topic already exists (semantically) in MongoDB
+    for the given subject_id using embeddings + cosine similarity.
+
+    Args:
+        topics_collection: PyMongo collection object.
+        subject_id: Subject identifier to filter topics in Mongo.
+        input_topics: List of dicts, each with at least "name" or "topic_name".
+        embedding: Object with method `embed(list_of_texts) -> list_of_vectors`.
+        similarity_threshold: Cosine similarity threshold in [0, 1].
+                              If max similarity >= threshold, topic is "present".
+
+    Returns:
+        List[bool] of same length as input_topics.
     """
 
-    # 1. Fetch existing topics from Mongo
+    # 1. Get existing topics for this subject_id
     existing_docs = list(
         topics_collection.find(
             {"subject_id": subject_id},
@@ -61,81 +52,81 @@ def topics_exist_for_subject(
         )
     )
 
-    existing_raw_names: List[str] = []
-    existing_norms: List[str] = []
+    # logger.debug("Input topics: %s", input_topics)
+    # logger.debug("Existing topics: %s", existing_docs)
 
-    for doc in existing_docs:
-        db_name = doc.get("topic_name")
-        if not db_name:
-            continue
-        existing_raw_names.append(db_name)
-        existing_norms.append(normalize_for_fuzzy(db_name))
+    # If no existing topics, nothing can match
+    if not existing_docs:
+        return [False] * len(input_topics)
 
-    if logger:
-        logger.info(
-            f"Existing topics for subject_id={subject_id}: {existing_raw_names}"
-        )
+    existing_names = [
+        doc["topic_name"] for doc in existing_docs if doc.get("topic_name")
+    ]
 
+    # If still empty after filtering
+    if not existing_names:
+        return [False] * len(input_topics)
+
+    # 2. Build list of input names (aligned with input_topics)
+    input_names: List[str] = []
+    for t in input_topics:
+        name = t.get("name") or t.get("topic_name") or ""
+        input_names.append(name)
+
+    # If all input names are empty, early-return
+    if not any(input_names):
+        return [False] * len(input_topics)
+
+    # 3. Compute embeddings
+    #    (One shot for all existing, one shot for all input)
+    logger.debug("Existing names: %s", existing_names)
+    logger.debug("Input names: %s", input_names)
+    existing_emb_list = embedding.embed(existing_names)  # list of vectors
+    input_emb_list = embedding.embed(input_names)  # list of vectors
+
+    # Convert to numpy arrays
+    existing_embs = np.array(existing_emb_list, dtype=float)  # (M, D)
+    input_embs = np.array(input_emb_list, dtype=float)  # (N, D)
+
+    # 4. Normalize (L2) so cosine = dot product
+    existing_norm = _normalize_embeddings(existing_embs)  # (M, D)
+    input_norm = _normalize_embeddings(input_embs)  # (N, D)
+
+    # 5. Cosine similarity matrix: (N, M)
+    #    sim[i, j] = cosine similarity between input i and existing j
+    sim_matrix = np.dot(input_norm, existing_norm.T)  # (N, M)
+
+    # 6. For each input topic, check if any similarity >= threshold
     results: List[bool] = []
 
-    # 2. For each input topic, find best fuzzy match
-    for topic in input_topics:
-        topic_name = topic.get("name") or topic.get("topic_name")
-        if not topic_name:
-            results.append(False)
-            continue
+    for i in range(len(input_topics)):
+        row = sim_matrix[i]  # shape (M,)
+        best_sim = float(row.max()) if row.size > 0 else 0.0
 
-        in_norm = normalize_for_fuzzy(topic_name)
+        logger.debug(f"Input topic '{input_names[i]}' best sim: {best_sim}")
 
-        if not existing_norms:
-            # No topics in DB → nothing can match
-            results.append(False)
-            if logger:
-                logger.info(
-                    f"Topic '{topic_name}': no existing topics to compare, result=False"
-                )
-            continue
-
-        # Find best match using token_set_ratio
-        best_match, best_score, best_idx = process.extractOne(
-            in_norm,
-            existing_norms,
-            scorer=fuzz.token_set_ratio,
-        )
-
-        exists = best_score >= similarity_threshold
-        results.append(exists)
-
-        if logger:
-            logger.debug(
-                f"Topic '{topic_name}' (norm='{in_norm}') "
-                f"best match='{existing_raw_names[best_idx]}' "
-                f"(norm='{best_match}') score={best_score} → exists={exists}"
-            )
+        results.append(best_sim >= similarity_threshold)
 
     return results
 
 
 if __name__ == "__main__":
-    from db.mongo_db import MongoDB
-
     mongo = MongoDB(os.getenv("MONGO_URI"), os.getenv("MONGO_DB_NAME"))
     topics_collection = mongo.get_collection("topic-ai-service")
 
     input_topics = [
         {"name": "Newtons house", "relevance": 0.95},
-        {"name": "Human in the loop", "relevance": 0.88},
+        {"name": "Kinetic Theory of Gases", "relevance": 0.88},
         {"name": "Random LLM Topic", "relevance": 0.5},
     ]
 
-    logger.info(f"Input topics: {input_topics}")
+    logger.info("Input topics: %s", input_topics)
 
-    exists_flags = topics_exist_for_subject(
+    present_flags = topics_exist_semantic(
         topics_collection=topics_collection,
         subject_id="subject_1",
         input_topics=input_topics,
-        similarity_threshold=70,
-        logger=logger,
+        similarity_threshold=0.6,  # tune 0.75–0.85 based on experiments
     )
 
-    logger.info(str(exists_flags))
+    print(present_flags)  # e.g. [True, False, False]

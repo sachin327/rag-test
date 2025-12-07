@@ -10,6 +10,7 @@ from db.qdrant_db import QdrantDB
 
 # from utils.common import timing_decorator
 from utils.response_format import ResponseSchema, JsonSchema, SummaryResponse
+from utils.thread_pool import ThreadPoolManager
 
 # Initialize logger
 logger = get_logger(__name__)
@@ -36,6 +37,7 @@ class RAGSystem:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.llm_service = LLMService()
+        self.thread_pool = ThreadPoolManager(max_workers=4)
 
         # Initialize Qdrant DB with gRPC enabled
         self.db = QdrantDB(
@@ -48,6 +50,15 @@ class RAGSystem:
 
         # Create collection (512 is the vector size for all-MiniLM-L6-v2)
         self.db.create_collection(self.collection_name)
+        # self.db.create_payload_index(self.collection_name, index=models.Index())
+
+    def create_payload_index(self, fields: List[str]):
+        for field in fields:
+            self.db.create_payload_index(
+                self.collection_name,
+                field_name=field,
+                field_schema=models.PayloadSchemaType.KEYWORD,
+            )
 
     def split_chunks(
         self, text: str, chunk_size: int = 512, overlap: int = 100
@@ -145,7 +156,7 @@ class RAGSystem:
         summary_response_schema = ResponseSchema(
             json_schema=JsonSchema(
                 name="summary",
-                schema_=SummaryResponse.model_json_schema(),
+                schema=SummaryResponse.model_json_schema(),
             )
         )
         if len(raw_text) < 4000:
@@ -160,7 +171,9 @@ class RAGSystem:
                 is_final=True,
                 response_schema=summary_response_schema,
             ):
+                # logger.debug(event)
                 response = event.get("response", {})
+                # logger.debug(response)
                 final_summary = response.get("summary", "")
                 topic_keys = response.get("topics", [])
             logger.info(f"Generated {len(topic_keys)} topics: {topic_keys}")
@@ -170,23 +183,40 @@ class RAGSystem:
             large_chunks = self.split_chunks(raw_text, 4000, 100)
             logger.info(f"Created {len(large_chunks)} large chunks (4000 chars each)")
 
-            # Generate summary for each large chunk
-            chunk_summaries = []
-            chunk_topics = []
-            for i, chunk in enumerate(large_chunks):
-                logger.info(f"Generating summary for chunk {i + 1}/{len(large_chunks)}")
-                for event in self.llm_service.generate_summary(
-                    chunk,
-                    want_topics=True,
-                    is_final=False,
-                    response_schema=summary_response_schema,
-                ):
-                    # logger.debug(event)
-                    response = event.get("response", {})
-                    chunk_summaries.append(response.get("summary", ""))
-                    chunk_topics.append(
-                        "\n".join(topic["name"] for topic in response.get("topics", []))
-                    )
+            # Generate summary for each large chunk in parallel
+            logger.info(
+                f"Generating summaries for {len(large_chunks)} chunks in parallel..."
+            )
+
+            def process_chunk(chunk_text):
+                chunk_summary = ""
+                chunk_topic_list = []
+                try:
+                    for event in self.llm_service.generate_summary(
+                        chunk_text,
+                        want_topics=True,
+                        is_final=False,
+                        response_schema=summary_response_schema,
+                    ):
+                        response = event.get("response", {})
+                        chunk_summary = response.get("summary", "")
+                        chunk_topic_list = response.get("topics", [])
+
+                        # logger.info(f"Generated summary for chunk: {chunk_summary}")
+                        # logger.info(f"Generated topics for chunk: {chunk_topic_list}")
+
+                    # Format topics as string for the combined list
+                    topics_str = "\n".join(topic["name"] for topic in chunk_topic_list)
+                    return chunk_summary, topics_str
+                except Exception as e:
+                    logger.error(f"Error processing chunk summary: {e}")
+                    return "", ""
+
+            # Execute in parallel
+            results = self.thread_pool.execute(process_chunk, large_chunks)
+
+            chunk_summaries = [r[0] for r in results if r[0]]
+            chunk_topics = [r[1] for r in results if r[1]]
 
             # Concatenate all summaries and topics
             combined_summaries = "\n\n".join(chunk_summaries)
@@ -247,17 +277,12 @@ class RAGSystem:
 
             self.db.add_text(self.collection_name, chunk_text, payload=chunk_data)
 
-        topic_flags_mongo = []
-        for topic in topic_keys:
-            topic_flags_mongo.append(True)
-
         return {
             "success": True,
             "metadata": metadata,
             "chunks_processed": len(storage_chunks),
             "topics_extracted": len(topic_keys),
             "topic_keys": topic_keys,
-            "topic_flags_mongo": topic_flags_mongo,
             "summary": final_summary,
             "summary_length": len(final_summary),
         }
@@ -296,6 +321,24 @@ class RAGSystem:
             query,
             limit=limit,
             filter_conditions=filter_conditions,
+        )
+
+    def search_by_filter(
+        self, filters: Optional[Dict[str, Any]] = None, limit: int = 5
+    ):
+        must_conditions = []
+        if filters:
+            for key, value in filters.items():
+                must_conditions.append(
+                    models.FieldCondition(key=key, match=models.MatchValue(value=value))
+                )
+
+        if must_conditions:
+            filter_conditions = models.Filter(must=must_conditions)
+        return self.db.search_by_filter(
+            self.collection_name,
+            filter_conditions=filter_conditions,
+            limit=limit,
         )
 
     def close(self):

@@ -24,23 +24,14 @@ from question_utils import (
 logger = get_logger(__name__)
 
 
-class QuestionGenerationService:
-    def __init__(
-        self,
-        qdrant_db: Optional[QdrantDB] = None,
-        mongo_db: Optional[MongoDB] = None,
-        llm_service: Optional[LLMService] = None,
-    ):
-        """Initialize the question generation service.
+class GenerateQuestionService:
+    def __init__(self):
+        """Initialize the question generation service."""
+        self.qdrant = QdrantDB()
+        self.mongo = MongoDB()
+        self.llm = LLMService()
 
-        Args:
-            qdrant_db: QdrantDB instance
-            mongo_db: MongoDB instance
-            llm_service: LLMService instance
-        """
-        self.qdrant = qdrant_db or QdrantDB()
-        self.mongo = mongo_db or MongoDB()
-        self.llm = llm_service or LLMService()
+        logger.info("Generate Question Service initialized")
 
         # Configuration
         self.candidate_pool_size = 80
