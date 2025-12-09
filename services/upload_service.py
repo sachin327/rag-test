@@ -80,8 +80,9 @@ class UploadService:
 
         if result:
             result = result[0]["payload"]
+
             topic_flags_mongo = topics_exist_semantic(
-                topics_collection=self.mongo.get_collection("topic-ai-service"),
+                topics_collection=self.mongo.get_collection("chaptertopics"),
                 subject_id=subject_id,
                 input_topics=result["topic_keys"],
                 similarity_threshold=0.6,
@@ -97,10 +98,9 @@ class UploadService:
                     "subject_name": subject_name,
                 },
                 "topics_extracted": len(result["topic_keys"]),
-                "topic_keys": result["topic_keys"],
+                "topic_keys": topic_flags_mongo,
                 "summary": result["summary"],
                 "summary_length": len(result["summary"]),
-                "topic_flags_mongo": topic_flags_mongo,
             }
 
         result = self.rag_service.add_document(
@@ -116,12 +116,12 @@ class UploadService:
         )
 
         topic_flags_mongo = topics_exist_semantic(
-            topics_collection=self.mongo.get_collection("topic-ai-service"),
+            topics_collection=self.mongo.get_collection("chaptertopics"),
             subject_id=subject_id,
             input_topics=result["topic_keys"],
             similarity_threshold=0.6,
         )
-        result["topic_flags_mongo"] = topic_flags_mongo
+        result["topic_keys"] = topic_flags_mongo
         return result
 
 
