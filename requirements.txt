@@ -3,7 +3,6 @@ uvicorn
 qdrant-client
 pypdf
 python-docx
-torch
 openai
 python-dotenv
 google-generativeai
