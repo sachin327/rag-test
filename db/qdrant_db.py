@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from qdrant_client.http.models import Distance, VectorParams
-from utils.embedding import embedding
+from utils.embedding import Embedding
 from logger import get_logger
 
 load_dotenv()
@@ -44,6 +44,7 @@ class QdrantDB:
         self.model_name = model_name
         self._model = None
         self.vector_size = vector_size
+        self.embedding = Embedding(os.getenv("EMBEDDING_API_URL"))
 
     def create_collection(
         self,
@@ -116,7 +117,7 @@ class QdrantDB:
         payload["text"] = text
 
         # Generate embedding based on the loaded model type
-        embd = embedding.embed([text])[0]
+        embd = self.embedding.embed([text])[0]
 
         point_id = str(uuid.uuid4())
 
@@ -147,7 +148,7 @@ class QdrantDB:
         Returns:
             List of search results with scores and payloads.
         """
-        query_vector = embedding.embed([query_text])[0]
+        query_vector = self.embedding.embed([query_text])[0]
         try:
             search_result = self.client.query_points(
                 collection_name=collection_name,

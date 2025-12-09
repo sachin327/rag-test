@@ -4,7 +4,7 @@ from pymongo.collection import Collection
 import numpy as np
 from bson.objectid import ObjectId
 from db.mongo_db import MongoDB
-from utils.embedding import embedding
+from utils.embedding import Embedding
 from dotenv import load_dotenv
 from logger import get_logger
 
@@ -105,6 +105,7 @@ def topics_exist_semantic(
 
     # 3. Compute embeddings
     #    (One shot for all existing, one shot for all input)
+    embedding = Embedding(os.getenv("EMBEDDING_API_URL"))
     logger.debug("Existing names: %s", existing_names)
     logger.debug("Input names: %s", input_names)
     existing_emb_list = embedding.embed(existing_names)  # list of vectors
