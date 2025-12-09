@@ -4,8 +4,11 @@ import re
 import time
 import os
 import shutil
+import asyncio
+import httpx
 from typing import Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from contextlib import asynccontextmanager
 
 from utils.schema import (
     GenerateQuestionsRequest,
@@ -24,8 +27,19 @@ from logger import get_logger
 # Initialize logger
 logger = get_logger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Start the keep-alive task
+    task = asyncio.create_task(keep_alive())
+    yield
+    # Shutdown: Cancel the task (optional, but good practice)
+    task.cancel()
+
+
 # Initialize FastAPI app
 app = FastAPI(
+    lifespan=lifespan,
     title="RAG System API",
     description="""
     ## RAG System API
@@ -47,6 +61,25 @@ app = FastAPI(
 )
 
 
+async def keep_alive():
+    """Periodically pings the server to keep it active."""
+    url = "https://embedding-service-vercel.onrender.com/ping"  # Adjust URL if deployed elsewhere
+    async with httpx.AsyncClient() as client:
+        while True:
+            try:
+                await asyncio.sleep(120)  # Ping every 2 minutes
+                logger.info(f"Sending keep-alive ping to {url}")
+                response = await client.get(url)
+                logger.info(f"Keep-alive ping status: {response.status_code}")
+            except Exception as e:
+                logger.error(f"Keep-alive ping failed: {e}")
+
+
+@app.get("/ping")
+async def ping():
+    return {"status": "alive"}
+
+
 # Startup event
 @app.on_event("startup")
 async def startup_event():
@@ -54,13 +87,12 @@ async def startup_event():
     logger.info("=" * 60)
     logger.info("🚀 RAG System API Starting...")
     logger.info("=" * 60)
-    logger.info("📚 Swagger UI: http://localhost:8000/docs")
-    logger.info("📖 ReDoc: http://localhost:8000/redoc")
-    logger.info("🏠 Root: http://localhost:8000/")
+    logger.info("📚 Swagger UI: http://API_URL/docs")
+    logger.info("📖 ReDoc: http://API_URL/redoc")
+    logger.info("🏠 Root: http://API_URL/")
     logger.info("=" * 60)
     logger.warning("⚠️  Note: Qdrant connection will be established on first API call")
-    logger.warning("   Make sure Qdrant is running on localhost:6333")
-    logger.info("   pip install fastembed")
+    logger.warning("   Make sure Qdrant is running")
     logger.info("=" * 60 + "\n")
 
 
