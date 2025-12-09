@@ -16,6 +16,7 @@ from utils.schema import (
 
 from services.service import (
     get_upload_service,
+    get_generate_question_service,
 )
 
 from logger import get_logger
@@ -124,7 +125,7 @@ async def generate_questions(request: GenerateQuestionsRequest):
     - **mode**: 'or' (any topic) or 'and' (all topics)
     """
     try:
-        service = None
+        service = get_generate_question_service()
         if not service:
             raise HTTPException(
                 status_code=503, detail="Question generation service not available"
@@ -132,10 +133,11 @@ async def generate_questions(request: GenerateQuestionsRequest):
 
         questions = service.generate_questions_for_topic_list(
             class_id=request.class_id,
-            chapter_id=request.chapter_id,
+            subject_ids=request.subject_ids,
+            chapter_ids=request.chapter_ids,
             input_topics=request.topics,
             n=request.n,
-            mode=request.mode,
+            question_type=request.type,
         )
 
         # Check if results are from cache (heuristic: very fast response)

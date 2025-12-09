@@ -10,11 +10,11 @@ class GenerateQuestionsRequest(BaseModel):
     """Request model for question generation."""
 
     class_id: str
-    subject_id: str
-    chapter_id: str
+    subject_ids: List[str]
+    chapter_ids: List[str]
     topics: List[str]
     n: int = 10
-    mode: str = "or"  # 'or' or 'and'
+    type: str = "mcq"  # 'mcq' or 'subjective'
 
 
 class QuestionItem(BaseModel):

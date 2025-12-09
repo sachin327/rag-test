@@ -1,4 +1,5 @@
 from services.upload_service import UploadService
+from services.generate_question_service import GenerateQuestionService
 
 UPLOAD_SERVICE = None
 GENERATE_QUESTION_SERVICE = None

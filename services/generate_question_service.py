@@ -1,25 +1,17 @@
 """Question Generation Service Implements the core question generation logic
-with Qdrant retrieval, clustering, LLM generation, and MongoDB caching."""
+with Qdrant retrieval and LLM generation."""
 
 import json
 import time
 from typing import Dict, List, Optional
 
-import numpy as np
 from qdrant_client.http import models
 
-from llm_gemini import LLMService
+from llm.llm_open_router import LLMService
 from logger import get_logger
-from mongo_db import MongoDB
-from qdrant_db import QdrantDB
-from question_utils import (
-    cluster_embeddings,
-    compute_overlap_count,
-    deduplicate_by_similarity,
-    merge_chunks_by_budget,
-    normalize_topics,
-    select_diverse_questions,
-)
+from db.mongo_db import MongoDB
+from db.qdrant_db import QdrantDB
+from utils.question_utils import normalize_topics
 
 logger = get_logger(__name__)
 
@@ -33,166 +25,116 @@ class GenerateQuestionService:
 
         logger.info("Generate Question Service initialized")
 
-        # Configuration
-        self.candidate_pool_size = 80
-        self.token_budget_per_cluster = 1200
-        self.dedupe_threshold = 0.92
-        self.questions_per_cluster = 1
-
-        logger.info("Question Generation Service initialized")
-
     def generate_questions_for_topic_list(
         self,
         class_id: str,
-        chapter_id: str,
+        subject_ids: List[str],
+        chapter_ids: List[str],
         input_topics: List[str],
         n: int = 10,
-        mode: str = "or",
+        question_type: str = "mcq",
         collection_name: str = "documents",
     ) -> List[Dict]:
         """Generates N questions for given topics using RAG approach.
 
         Args:
             class_id: Document identifier
-            chapter_id: Chapter identifier
+            subject_ids: List of subject identifiers
+            chapter_ids: List of chapter identifiers
             input_topics: List of topic strings
             n: Number of questions to generate
-            mode: 'or' (any topic) or 'and' (all topics)
+            question_type: 'mcq' or 'subjective'
             collection_name: Qdrant collection name
 
         Returns:
             List of question dictionaries
         """
         logger.info(
-            f"Generating {n} questions for doc={class_id}, chapter={chapter_id}, topics={input_topics}, mode={mode}"
+            f"Generating {n} questions for class={class_id}, subjects={subject_ids}, chapters={chapter_ids}, topics={input_topics}, type={question_type}"
         )
         start_time = time.time()
 
         # Step 1: Normalize topics
         normalized_topics = normalize_topics(input_topics)
-        logger.info(f"Normalized topics: {normalized_topics}")
+        topic_concat_str = " ".join(normalized_topics)
 
-        # Step 2: Check MongoDB cache
-        cached_questions = self._check_cache(
-            class_id, chapter_id, normalized_topics, n, mode
-        )
-        if len(cached_questions) >= n:
-            logger.info(f"Returning {len(cached_questions)} cached questions")
-            return cached_questions[:n]
-
-        # Step 3: Retrieve candidates from Qdrant
-        candidates = self._query_qdrant_for_topics(
-            class_id, chapter_id, normalized_topics, collection_name
+        # Step 2: Retrieve candidates from Qdrant
+        # Search 10 results with embedding of topic list concatenated
+        candidates = self._query_qdrant(
+            class_id,
+            subject_ids,
+            chapter_ids,
+            topic_concat_str,
+            collection_name,
+            limit=10,
         )
 
         if not candidates:
             logger.warning("No candidates found in Qdrant")
-            return cached_questions  # Return whatever we have from cache
+            return []
 
         logger.info(f"Retrieved {len(candidates)} candidates from Qdrant")
 
-        # Step 4: Cluster candidates
-        clusters = self._cluster_candidates(candidates, n)
-
-        # Step 5: Generate questions per cluster
-        generated_questions = []
-        for cluster_idx, cluster_indices in enumerate(clusters):
-            cluster_chunks = [candidates[i] for i in cluster_indices]
-
-            # Build context for this cluster
-            context = merge_chunks_by_budget(
-                cluster_chunks, self.token_budget_per_cluster
-            )
-
-            # Generate questions
-            questions = self._llm_generate_questions(
-                context, normalized_topics, self.questions_per_cluster
-            )
-
-            # Add cluster info
-            for q in questions:
-                q["cluster_id"] = cluster_idx
-
-            generated_questions.extend(questions)
+        # Step 3: Generate questions using LLM
+        # Pass chunks + topic concat string to LLM
+        generated_questions = self._llm_generate_questions(
+            candidates,
+            normalized_topics,
+            n,
+            question_type,
+        )
 
         logger.info(f"Generated {len(generated_questions)} questions from LLM")
 
-        # Step 6: Compute embeddings for deduplication
-        for q in generated_questions:
-            q["embedding"] = self._compute_question_embedding(q["question_text"])
-
-        # Step 7: Deduplicate
-        unique_questions = deduplicate_by_similarity(
-            generated_questions, self.dedupe_threshold
-        )
-        logger.info(f"After deduplication: {len(unique_questions)} questions")
-
-        # Step 8: Select top N diverse questions
-        selected_questions = select_diverse_questions(
-            unique_questions, n, normalized_topics
-        )
-
-        # Step 9: Add metadata and persist to MongoDB
+        # Step 4: Add metadata and persist to MongoDB
         questions_collection = self.mongo.get_questions_collection()
-        for q in selected_questions:
-            del q["embedding"]
+        final_questions = []
+
+        for q in generated_questions:
             q["class_id"] = class_id
-            q["chapter_id"] = chapter_id
+            # For simplicity, we might not know exactly which chapter/subject a generated question belongs to
+            # if we fed multiple chapters/subjects. But usually the user filters by specific ones.
+            # We'll store the request context.
+            q["subject_ids"] = subject_ids
+            q["chapter_ids"] = chapter_ids
             q["created_at"] = time.time()
             q["status"] = "draft"
             q["origin"] = "generated"
-            q["overlap_count"] = compute_overlap_count(
-                q.get("topic_keys", []), normalized_topics
-            )
+            q["type"] = question_type
 
             # Insert into MongoDB
             try:
                 result = questions_collection.insert_one(q.copy())
                 q["_id"] = str(result.inserted_id)
+                final_questions.append(q)
             except Exception as e:
                 logger.exception(f"Failed to insert question to MongoDB: {e}")
 
         elapsed = time.time() - start_time
         logger.info(
-            f"Question generation completed in {elapsed:.2f}s, returning {len(selected_questions)} questions"
+            f"Question generation completed in {elapsed:.2f}s, returning {len(final_questions)} questions"
         )
 
-        return selected_questions
+        return final_questions
 
-    def _check_cache(
-        self, class_id: str, chapter_id: str, topics: List[str], n: int, mode: str
+    def _query_qdrant(
+        self,
+        class_id: str,
+        subject_ids: List[str],
+        chapter_ids: List[str],
+        query_text: str,
+        collection_name: str,
+        limit: int = 10,
     ) -> List[Dict]:
-        """Checks MongoDB cache for existing questions.
+        """Queries Qdrant for chunks matching topics and filters.
 
         Args:
             class_id: Document ID
-            chapter_id: Chapter ID
-            topics: Normalized topics
-            n: Number of questions needed
-            mode: 'or' or 'and'
-
-        Returns:
-            List of cached questions
-        """
-        return self.mongo.search_questions(
-            class_id=class_id,
-            chapter_id=chapter_id,
-            topic_keys=topics,
-            difficulty=None,
-            limit=n,
-            sort_by="created_at",
-        )
-
-    def _query_qdrant_for_topics(
-        self, class_id: str, chapter_id: str, topics: List[str], collection_name: str
-    ) -> List[Dict]:
-        """Queries Qdrant for chunks matching topics.
-
-        Args:
-            class_id: Document ID
-            chapter_id: Chapter ID
-            topics: Normalized topics
+            subject_ids: List of subject IDs
+            chapter_ids: List of chapter IDs
+            query_text: Concatenated topics string
             collection_name: Qdrant collection
+            limit: Number of results
 
         Returns:
             List of chunk dictionaries
@@ -201,40 +143,41 @@ class GenerateQuestionService:
         must_conditions = [
             models.FieldCondition(
                 key="class_id", match=models.MatchValue(value=class_id)
-            ),
-            models.FieldCondition(
-                key="chapter_id", match=models.MatchValue(value=chapter_id)
-            ),
-        ]
-
-        should_conditions = [
-            models.FieldCondition(
-                key="topic_keys", match=models.MatchValue(value=topic)
             )
-            for topic in topics
         ]
 
-        filter_conditions = models.Filter(
-            must=must_conditions,
-            should=should_conditions if should_conditions else None,
-        )
+        # Subject IDs (MatchAny)
+        if subject_ids:
+            must_conditions.append(
+                models.FieldCondition(
+                    key="subject_id", match=models.MatchAny(any=subject_ids)
+                )
+            )
 
-        # Search with filter only (no query vector for now)
+        # Chapter IDs (MatchAny)
+        if chapter_ids:
+            must_conditions.append(
+                models.FieldCondition(
+                    key="chapter_id", match=models.MatchAny(any=chapter_ids)
+                )
+            )
+
+        filter_conditions = models.Filter(must=must_conditions)
+
+        # Search using text (which converts to vector internally in QdrantDB.search_by_text)
         try:
-            # Use scroll to get all matching points
-            results, _ = self.qdrant.client.scroll(
+            results = self.qdrant.search_by_text(
                 collection_name=collection_name,
-                scroll_filter=filter_conditions,
-                limit=self.candidate_pool_size,
-                with_payload=True,
-                with_vectors=True,
+                query_text=query_text,
+                limit=limit,
+                filter_conditions=filter_conditions,
             )
 
-            # Convert to list of dicts
+            # Extract payload and id
             candidates = []
-            for point in results:
-                payload = point.payload
-                payload["embedding"] = point.vector
+            for res in results:
+                payload = res.get("payload", {})
+                payload["id"] = res.get("id")
                 candidates.append(payload)
 
             return candidates
@@ -243,66 +186,66 @@ class GenerateQuestionService:
             logger.exception(f"Qdrant query failed: {e}")
             return []
 
-    def _cluster_candidates(self, candidates: List[Dict], n: int) -> List[List[int]]:
-        """Clusters candidates by embeddings.
-
-        Args:
-            candidates: List of candidate chunks
-            n: Desired number of clusters (approximately)
-
-        Returns:
-            List of cluster indices
-        """
-        # Extract embeddings
-        embeddings = np.array([c.get("embedding", []) for c in candidates])
-
-        if len(embeddings) == 0:
-            return []
-
-        # Determine k
-        k = min(len(candidates), max(n, 2))
-
-        # Cluster
-        clusters = cluster_embeddings(embeddings, k, method="kmeans")
-
-        return clusters
-
     def _llm_generate_questions(
-        self, context: str, topics: List[str], per_cluster: int = 2
+        self,
+        candidates: List[Dict],
+        topics: List[str],
+        n: int,
+        question_type: str,
     ) -> List[Dict]:
         """Generates questions using LLM for a given context.
 
         Args:
-            context: Merged chunk context
+            candidates: List of retrieved chunks
             topics: Input topics for guidance
-            per_cluster: Number of questions to generate
+            n: Number of questions to generate
+            question_type: 'mcq' or 'subjective'
 
         Returns:
             List of question dictionaries
         """
-        prompt = f"""You are a question generator. Using the text below (which comes from chunks of a chapter), produce up to {per_cluster} questions relevant to the content.
+        # Prepare context from chunks
+        context_parts = []
+        for i, c in enumerate(candidates):
+            text = c.get("text", "")
+            chunk_id = c.get("id", "unknown")
+            context_parts.append(f"Chunk {i} (ID: {chunk_id}):\n{text}\n")
 
-Return ONLY a JSON array where each item has:
-- question_text: The question (string)
-- answer: Answer in 1-2 sentences (string)
-- difficulty: One of "easy", "medium", "hard"
-- type: One of "fact", "conceptual", "mcq", "short_answer"
-- topic_keys: Array of relevant topic labels (lowercase)
-- source_chunks: Array of chunk indices mentioned in the text (integers)
+        context = "\n".join(context_parts)
+        topics_str = ", ".join(topics)
 
-For MCQ type, also include:
-- options: Array of 4 option strings
-- correct_option_index: Integer 0-3
+        prompt = f"""You are an expert educational content generator. 
+Using the provided text chunks, generate {n} {question_type.upper()} questions.
 
-Constraints:
-- Avoid duplicating questions
-- Use these topics as guidance: {", ".join(topics)}
-- Ensure variety in difficulty and type
-
-Text:
+Context Text:
 {context}
 
-JSON array:"""
+Target Topics: {topics_str}
+
+Requirements:
+1. Generate exactly {n} questions.
+2. Question Type: {question_type}
+   - If MCQ: Provide 4 options and the correct option index (0-3).
+   - If Subjective: Provide a detailed answer.
+3. Difficulty: Mix of easy, medium, hard.
+4. Source Chunks: Identify which chunk IDs were used to answer the question.
+5. Topic Keys: Tag each question with relevant topics from the provided list.
+
+Output Format:
+Return ONLY a JSON array of objects with this schema:
+[
+  {{
+    "question_text": "string",
+    "answer": "string (correct option text for MCQ, or full answer for subjective)",
+    "difficulty": "easy|medium|hard",
+    "type": "{question_type}",
+    "topic_keys": ["topic1", "topic2"],
+    "source_chunks": [chunk_id1, chunk_id2],
+    "options": ["opt1", "opt2", "opt3", "opt4"], // Only for MCQ
+    "correct_option_index": 0 // Only for MCQ
+  }}
+]
+"""
 
         try:
             response = self.llm.generate_response(prompt, [])
@@ -322,53 +265,12 @@ JSON array:"""
             # Normalize topic_keys in each question
             for q in questions:
                 q["topic_keys"] = normalize_topics(q.get("topic_keys", []))
+                # Ensure source_chunks are present
+                if "source_chunks" not in q:
+                    q["source_chunks"] = []
 
             return questions
 
         except Exception as e:
             logger.exception(f"LLM question generation failed: {e}")
             return []
-
-    def _compute_question_embedding(self, question_text: str) -> List[float]:
-        """Computes embedding for a question text.
-
-        Args:
-            question_text: Question string
-
-        Returns:
-            Embedding vector
-        """
-        try:
-            # Use Qdrant's model to compute embedding
-            model = self.qdrant.model
-
-            if (
-                hasattr(self.qdrant, "_model_type")
-                and self.qdrant._model_type == "fastembed"
-            ):
-                embedding = list(model.embed([question_text]))[0]
-            else:
-                embedding = model.encode(question_text).tolist()
-
-            return embedding
-
-        except Exception as e:
-            logger.exception(f"Failed to compute question embedding: {e}")
-            return []
-
-
-if __name__ == "__main__":
-    # Example usage
-    try:
-        service = QuestionGenerationService()
-
-        questions = service.generate_questions_for_topic_list(
-            class_id="9th ncert", chapter_id="chapter1", input_topics=[], n=1
-        )
-
-        logger.info(f"Generated {len(questions)} questions")
-        for i, q in enumerate(questions):
-            logger.info(f"Q{i + 1}: {q.get('question_text', 'N/A')}")
-
-    except Exception as e:
-        logger.exception(f"Question generation test failed: {e}")
