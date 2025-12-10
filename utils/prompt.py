@@ -64,3 +64,12 @@ Output should be following the given response_schema.
 Also the final topic list should be generated from the given topic list.
 For topics use standard educational topic names. should not be very long.
 """
+
+    @staticmethod
+    def get_questions_generate_prompt(question_type: str, limit: int) -> str:
+        return f"""Your task is to generate questions from the given context.
+Try to preserrve the original meaning and context of the text.
+Output should be following the given response_schema.
+Question type should be {question_type}.
+Limit should be {limit}.
+"""

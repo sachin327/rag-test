@@ -16,23 +16,42 @@ class ResponseSchema(BaseModel):
 class Topic(BaseModel):
     name: str = Field(..., description="Name of the topic, short and concise")
     relevance: float = Field(..., description="Relevance score (0-1)")
+    description: str = Field(..., description="Description of the topic")
 
 
 class SummaryResponse(BaseModel):
     summary: str = Field(..., description="A concise summary of the content")
     topics: List[Topic] = Field(
         default_factory=list,
-        description="List of key topics extracted, not more than 6",
+        description="List of key topics extracted, not more than 10",
     )
     importance_score: float = Field(..., description="Overall importance score (0-1)")
 
 
-class RAGResponse(BaseModel):
-    answer: str = Field(..., description="The answer to the user's question")
-    sources: List[str] = Field(
-        default_factory=list, description="List of source files used"
+class QuestionItem(BaseModel):
+    question_text: str = Field(..., description="The question text")
+    answer: str = Field(..., description="The answer to the question")
+    difficulty: str = Field(..., description="Difficulty level (easy, medium, hard)")
+    type: str = Field(..., description="Question type (mcq, subjective)")
+    topic_keys: List[str] = Field(
+        default_factory=list,
+        description="List of topic keys associated with the question",
     )
-    confidence: float = Field(..., description="Confidence score (0-1)")
+    options: List[str] = Field(
+        default_factory=list,
+        description="List of options for the question (only for mcq)",
+    )
+    correct_option_index: int = Field(
+        default=0,
+        description="Index of the correct option (only for mcq)",
+    )
+
+
+class QuestionResponse(BaseModel):
+    questions: List[QuestionItem] = Field(
+        default_factory=list,
+        description="List of questions generated",
+    )
 
 
 if __name__ == "__main__":

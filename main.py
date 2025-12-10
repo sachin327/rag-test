@@ -6,15 +6,16 @@ import os
 import shutil
 import asyncio
 import httpx
-from typing import Optional
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Depends
 from contextlib import asynccontextmanager
 
 from utils.schema import (
     GenerateQuestionsRequest,
     GenerateQuestionsResponse,
-    QueryRequest,
-    QueryResponse,
+    # QueryRequest,
+    # QueryResponse,
+    DocumentUploadRequest,
+    DocumentUploadResponse,
 )
 
 from services.service import (
@@ -119,31 +120,31 @@ async def root():
     }
 
 
-@app.post("/query", response_model=QueryResponse)
-async def query_documents(request: QueryRequest):
-    """Query the RAG system for relevant documents and generate an answer."""
-    if not request.query.strip():
-        raise HTTPException(status_code=400, detail="Query cannot be empty")
+# @app.post("/query", response_model=QueryResponse)
+# async def query_documents(request: QueryRequest):
+#     """Query the RAG system for relevant documents and generate an answer."""
+#     if not request.query.strip():
+#         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
-    try:
-        rag = None
-        results = rag.search(
-            request.query,
-            limit=request.limit,
-            class_id=request.class_id,
-            chapter_id=request.chapter_id,
-        )
+#     try:
+#         rag = None
+#         results = rag.search(
+#             request.query,
+#             limit=request.limit,
+#             class_id=request.class_id,
+#             chapter_id=request.chapter_id,
+#         )
 
-        # Generate answer using LLM
-        answer = None
-        llm = None
-        if llm:
-            # Use streaming method to print to console while generating
-            answer = llm.generate_response_stream(request.query, results)
+#         # Generate answer using LLM
+#         answer = None
+#         llm = None
+#         if llm:
+#             # Use streaming method to print to console while generating
+#             answer = llm.generate_response_stream(request.query, results)
 
-        return QueryResponse(answer=answer, results=results, count=len(results))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+#         return QueryResponse(answer=answer, results=results, count=len(results))
+#     except Exception as e:
+#         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
 
 @app.post("/generate-questions", response_model=GenerateQuestionsResponse)
@@ -165,21 +166,14 @@ async def generate_questions(request: GenerateQuestionsRequest):
 
         questions = service.generate_questions_for_topic_list(
             class_id=request.class_id,
-            subject_ids=request.subject_ids,
-            chapter_ids=request.chapter_ids,
+            subject_id=request.subject_id,
+            chapter_id=request.chapter_id,
             input_topics=request.topics,
             n=request.n,
             question_type=request.type,
         )
 
-        # Check if results are from cache (heuristic: very fast response)
-        cached = len(questions) > 0 and all(
-            q.get("origin") != "generated" for q in questions
-        )
-
-        return GenerateQuestionsResponse(
-            questions=questions, count=len(questions), cached=cached
-        )
+        return GenerateQuestionsResponse(questions=questions, count=len(questions))
     except Exception as e:
         logger.exception(f"Question generation failed: {e}")
         raise HTTPException(
@@ -187,15 +181,28 @@ async def generate_questions(request: GenerateQuestionsRequest):
         )
 
 
-@app.post("/upload-document")
+def document_meta_dependency(
+    class_id: str | None = Form(None),
+    chapter_id: str | None = Form(None),
+    subject_id: str | None = Form(None),
+    class_name: str = Form(...),
+    chapter_name: str = Form(...),
+    subject_name: str = Form(...),
+) -> DocumentUploadRequest:
+    return DocumentUploadRequest(
+        class_id=class_id,
+        chapter_id=chapter_id,
+        subject_id=subject_id,
+        class_name=class_name,
+        chapter_name=chapter_name,
+        subject_name=subject_name,
+    )
+
+
+@app.post("/upload-document", response_model=DocumentUploadResponse)
 async def upload_document(
     file: UploadFile = File(...),
-    class_id: Optional[str] = Form(None),
-    chapter_id: Optional[str] = Form(None),
-    subject_id: Optional[str] = Form(None),
-    chapter_name: str = Form(...),
-    class_name: str = Form(...),
-    subject_name: str = Form(...),
+    meta: DocumentUploadRequest = Depends(document_meta_dependency),
 ):
     """
     Upload and ingest a document with enhanced metadata extraction.
@@ -229,21 +236,21 @@ async def upload_document(
         r"[^a-zA-Z0-9]", "_", os.path.splitext(file.filename)[0]
     ).lower()
 
-    if not class_id:
-        class_id = f"doc_{sanitized_filename}_{timestamp}"
-        logger.info(f"Auto-generated class_id: {class_id}")
+    if not meta.class_id:
+        meta.class_id = f"doc_{sanitized_filename}_{timestamp}"
+        logger.info(f"Auto-generated class_id: {meta.class_id}")
 
-    if not chapter_id:
+    if not meta.chapter_id:
         # Sanitize chapter name for ID
-        sanitized_chapter = re.sub(r"[^a-zA-Z0-9]", "_", chapter_name).lower()
-        chapter_id = f"ch_{sanitized_chapter}_{timestamp}"
-        logger.info(f"Auto-generated chapter_id: {chapter_id}")
+        sanitized_chapter = re.sub(r"[^a-zA-Z0-9]", "_", meta.chapter_name).lower()
+        meta.chapter_id = f"ch_{sanitized_chapter}_{timestamp}"
+        logger.info(f"Auto-generated chapter_id: {meta.chapter_id}")
 
-    if not subject_id:
+    if not meta.subject_id:
         # Sanitize subject name for ID
-        sanitized_subject = re.sub(r"[^a-zA-Z0-9]", "_", subject_name).lower()
-        subject_id = f"subj_{sanitized_subject}_{timestamp}"
-        logger.info(f"Auto-generated subject_id: {subject_id}")
+        sanitized_subject = re.sub(r"[^a-zA-Z0-9]", "_", meta.subject_name).lower()
+        meta.subject_id = f"subj_{sanitized_subject}_{timestamp}"
+        logger.info(f"Auto-generated subject_id: {meta.subject_id}")
 
     # Create uploads directory
     upload_dir = "/tmp/uploads"
@@ -265,15 +272,15 @@ async def upload_document(
 
         result = service.upload_document(
             file_path=file_path,
-            class_id=class_id,
-            class_name=class_name,
-            chapter_id=chapter_id,
-            chapter_name=chapter_name,
-            subject_id=subject_id,
-            subject_name=subject_name,
+            class_id=meta.class_id,
+            class_name=meta.class_name,
+            chapter_id=meta.chapter_id,
+            chapter_name=meta.chapter_name,
+            subject_id=meta.subject_id,
+            subject_name=meta.subject_name,
         )
 
-        return result
+        return DocumentUploadResponse(**result)
     except Exception as e:
         # Clean up file if processing fails
         if os.path.exists(file_path):
@@ -282,6 +289,10 @@ async def upload_document(
         raise HTTPException(
             status_code=500, detail=f"Failed to process document: {str(e)}"
         )
+    finally:
+        # 3. FINALLY block is executed BEFORE the return happens
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
 
 @app.get("/health")

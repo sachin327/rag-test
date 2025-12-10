@@ -14,7 +14,9 @@ logger = get_logger(__name__)
 class TopicSearch:
     def __init__(self):
         self.mongo = MongoDB(os.getenv("MONGO_URI"), os.getenv("MONGO_DB_NAME"))
-        self.topics_collection = self.mongo.get_collection("chaptertopics")
+        self.topics_collection = self.mongo.get_collection(
+            os.getenv("MONGO_TOPIC_COLLECTION")
+        )
 
     def _normalize_embeddings(self, arr: np.ndarray) -> np.ndarray:
         """
@@ -98,7 +100,11 @@ class TopicSearch:
         if not existing_docs:
             return input_topics
 
-        existing_names = [doc["title"] for doc in existing_docs if doc.get("title")]
+        existing_names = [
+            f"{doc.get('title', '')} {doc.get('description', '')}"
+            for doc in existing_docs
+            if doc.get("title")
+        ]
 
         # If still empty after filtering
         if not existing_names:
@@ -108,7 +114,8 @@ class TopicSearch:
         input_names: List[str] = []
         for t in input_topics:
             name = t.get("name") or t.get("topic_name") or ""
-            input_names.append(name)
+            description = t.get("description") or ""
+            input_names.append(name + " " + description)
 
         # If all input names are empty, early-return
         if not any(input_names):
@@ -151,8 +158,10 @@ class TopicSearch:
 
             if best_sim >= similarity_threshold:
                 input_topics[i]["is_exists"] = True
-                input_topics[i]["name"] = existing_names[best_idx]
-
+                input_topics[i]["name"] = existing_docs[best_idx].get("title", "")
+                input_topics[i]["description"] = existing_docs[best_idx].get(
+                    "description", ""
+                )
             else:
                 input_topics[i]["is_exists"] = False
 
@@ -161,12 +170,12 @@ class TopicSearch:
 
 if __name__ == "__main__":
     mongo = MongoDB(os.getenv("MONGO_URI"), os.getenv("MONGO_DB_NAME"))
-    topics_collection = mongo.get_collection("chaptertopics")
+    topics_collection = mongo.get_collection(os.getenv("MONGO_TOPIC_COLLECTION"))
 
     input_topics = [
-        {"name": "Metals vs. Non-metals", "relevance": 0.95},
-        {"name": "Kinetic Theory of Gases", "relevance": 0.88},
-        {"name": "Random LLM Topic", "relevance": 0.5},
+        {"name": "Metals vs. Non-metals", "relevance": 0.95, "description": ""},
+        {"name": "Kinetic Theory of Gases", "relevance": 0.88, "description": ""},
+        {"name": "Random LLM Topic", "relevance": 0.5, "description": ""},
     ]
 
     logger.info("Input topics: %s", input_topics)

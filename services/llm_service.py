@@ -1,7 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import List, Generator, Any
 from utils.prompt import PromptService
-from utils.common import timing_decorator
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -81,6 +80,47 @@ class LLMService(ABC):
         try:
             # logger.debug(f"Generating summary for text: {text}")
             # logger.debug(f"System prompt: {system_prompt}")
+            for summary in self.get_response(
+                system_prompt=system_prompt,
+                user_prompt=text,
+                stream=stream,
+                response_schema=response_schema,
+            ):
+                # logger.debug(f"Generated summary: {summary}")
+                yield summary
+
+        except Exception as e:
+            logger.warning(f"Failed to generate summary with LLM: {e}")
+            # Fallback: return first 200 words
+            words = text.split()[:200]
+            return " ".join(words)
+
+    def generate_questions(
+        self,
+        text: str,
+        question_type: str,
+        limit: int,
+        stream: bool = False,
+        response_schema: Any = None,
+    ) -> str:
+        """Generates a short summary (around 200 words) for a large chunk using
+        LLM.
+
+        Args:
+            text: Text chunk (up to 4000 chars)
+            want_topics: Whether to generate topics
+            is_final: Whether this is the final summary
+
+        Returns:
+            Summary text (around 200 words)
+        """
+
+        system_prompt = PromptService.get_questions_generate_prompt(
+            question_type, limit
+        )
+
+        try:
+            logger.debug("Generating questions")
             for summary in self.get_response(
                 system_prompt=system_prompt,
                 user_prompt=text,

@@ -4,11 +4,9 @@ Uses RAGSystem from rag.py for all chunking, summarization, and
 ingestion functionality.
 """
 
-import os
 from logger import get_logger
 from services.rag import RAGSystem
 from dotenv import load_dotenv
-from utils.topic_search import TopicSearch
 
 logger = get_logger(__name__)
 load_dotenv()
@@ -25,7 +23,6 @@ class UploadService:
         self.rag_service.create_payload_index(
             fields=["class_id", "chapter_id", "subject_id"]
         )
-        self.topic_search = TopicSearch()
 
     def is_already_exists(
         self,
@@ -79,12 +76,6 @@ class UploadService:
 
         if result:
             result = result[0]["payload"]
-
-            topic_flags_mongo = self.topic_search.topics_exist_semantic(
-                subject_id=subject_id,
-                input_topics=result["topic_keys"],
-                similarity_threshold=0.6,
-            )
             return {
                 "success": True,
                 "metadata": {
@@ -95,8 +86,8 @@ class UploadService:
                     "chapter_name": chapter_name,
                     "subject_name": subject_name,
                 },
-                "topics_extracted": len(result["topic_keys"]),
-                "topic_keys": topic_flags_mongo,
+                "topics_extracted": len(result["all_topic_keys"]),
+                "topic_keys": result["all_topic_keys"],
                 "summary": result["summary"],
                 "summary_length": len(result["summary"]),
             }
@@ -113,12 +104,6 @@ class UploadService:
             },
         )
 
-        topic_flags_mongo = self.topic_search.topics_exist_semantic(
-            subject_id=subject_id,
-            input_topics=result["topic_keys"],
-            similarity_threshold=0.6,
-        )
-        result["topic_keys"] = topic_flags_mongo
         return result
 
 

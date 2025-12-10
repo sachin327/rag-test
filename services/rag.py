@@ -7,10 +7,14 @@ from document.document_loader import DocumentLoader
 from llm.llm_open_router import LLMService
 from logger import get_logger
 from db.qdrant_db import QdrantDB
+from utils.embedding import Embedding
 
 # from utils.common import timing_decorator
 from utils.response_format import ResponseSchema, JsonSchema, SummaryResponse
 from utils.thread_pool import ThreadPoolManager
+from utils.chunker import DocumentChunker
+from utils.topic_embedder import TopicEmbedder
+from utils.topic_search import TopicSearch
 
 # Initialize logger
 logger = get_logger(__name__)
@@ -25,6 +29,10 @@ class RAGSystem:
         collection_name: str = os.getenv("QDRANT_COLLECTION_NAME"),
         chunk_size: int = int(os.getenv("QDRANT_CHUNK_SIZE", 512)),
         chunk_overlap: int = int(os.getenv("QDRANT_CHUNK_OVERLAP", 100)),
+        summary_chunk_size: int = int(os.getenv("QDRANT_SUMMARY_CHUNK_SIZE", 4000)),
+        summary_chunk_overlap: int = int(
+            os.getenv("QDRANT_SUMMARY_CHUNK_OVERLAP", 100)
+        ),
     ):
         """Initializes the RAG system with Qdrant DB.
 
@@ -34,10 +42,12 @@ class RAGSystem:
             chunk_overlap: Overlap between chunks.
         """
         self.collection_name = collection_name
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
         self.llm_service = LLMService()
         self.thread_pool = ThreadPoolManager(max_workers=4)
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+        self.summary_chunk_size = summary_chunk_size
+        self.summary_chunk_overlap = summary_chunk_overlap
 
         # Initialize Qdrant DB with gRPC enabled
         self.db = QdrantDB(
@@ -51,6 +61,8 @@ class RAGSystem:
         # Create collection (512 is the vector size for all-MiniLM-L6-v2)
         self.db.create_collection(self.collection_name)
         # self.db.create_payload_index(self.collection_name, index=models.Index())
+        self.embedding = Embedding()
+        self.topic_search = TopicSearch()
 
     def create_payload_index(self, fields: List[str]):
         for field in fields:
@@ -59,52 +71,6 @@ class RAGSystem:
                 field_name=field,
                 field_schema=models.PayloadSchemaType.KEYWORD,
             )
-
-    def split_chunks(
-        self, text: str, chunk_size: int = 512, overlap: int = 100
-    ) -> List[str]:
-        """Splits text into chunks with overlap.
-
-        Args:
-            text: Full text
-            chunk_size: Target chunk size (default: uses self.chunk_size)
-            overlap: Overlap size (default: uses self.chunk_overlap)
-
-        Returns:
-            List of text chunks with overlap
-        """
-        if not text:
-            return []
-
-        chunks = []
-        start = 0
-        text_length = len(text)
-
-        while start < text_length:
-            end = min(start + chunk_size, text_length)
-
-            # Extend to sentence boundary if possible
-            if end < text_length:
-                next_period = text.find(".", end)
-                next_space = text.find(" ", end)
-
-                # Find the nearest boundary within reasonable distance
-                if next_period != -1 and next_period - end < 100:
-                    end = next_period + 1
-                elif next_space != -1 and next_space - end < 50:
-                    end = next_space
-
-            chunk = text[start:end].strip()
-            if chunk:
-                chunks.append(chunk)
-
-            # Move start position considering overlap
-            if end < text_length:
-                start = end - overlap
-            else:
-                start = text_length
-
-        return chunks
 
     def build_summary_context(
         self,
@@ -180,8 +146,14 @@ class RAGSystem:
             logger.info(f"Final summary: {len(final_summary)} chars")
         else:
             # Chunk into 4000 char chunks for summary generation
-            large_chunks = self.split_chunks(raw_text, 4000, 100)
-            logger.info(f"Created {len(large_chunks)} large chunks (4000 chars each)")
+            chunker = DocumentChunker(
+                target_tokens=self.summary_chunk_size,
+                overlap_tokens=self.summary_chunk_overlap,
+            )
+            large_chunks = chunker.split_chunks(raw_text)
+            logger.info(
+                f"Created {len(large_chunks)} large chunks ({self.summary_chunk_size} chars each)"
+            )
 
             # Generate summary for each large chunk in parallel
             logger.info(
@@ -246,17 +218,36 @@ class RAGSystem:
             logger.info(f"Final summary: {len(final_summary)} chars")
 
         # Step 6: Re-chunk into 512 chars with 100 char overlap for Qdrant storage
-        storage_chunks = self.split_chunks(
-            raw_text, chunk_size=self.chunk_size, overlap=self.chunk_overlap
+        chunker = DocumentChunker(
+            target_tokens=self.chunk_size, overlap_tokens=self.chunk_overlap
         )
-        logger.info(
-            f"Created {len(storage_chunks)} storage chunks ({self.chunk_size} chars with {self.chunk_overlap} overlap)"
+        storage_chunks = chunker.split_chunks(raw_text)
+        logger.info(f"Created {len(storage_chunks)} storage chunks")
+
+        # Step 6.5: Embed topic keys
+        topic_keys = self.topic_search.topics_exist_semantic(
+            subject_id=metadata.get("subject_id"),
+            input_topics=topic_keys,
+            similarity_threshold=0.6,
         )
+        topic_names = [
+            f"{topic['name']} {topic['description']}" for topic in topic_keys
+        ]
+        topic_keys_embeddings = self.embedding.embed(topic_names)
+        chunk_keys_embeddings = self.embedding.embed(storage_chunks)
 
         # Step 7: Prepare chunks for storage with metadata
         for i, chunk_text in enumerate(storage_chunks):
             # Count tokens (simple approximation: split by whitespace)
             words_count = len(chunk_text.split())
+
+            # Search relavent topics
+            chunk_embedding = chunk_keys_embeddings[i]
+            relevant_topic_keys = TopicEmbedder.get_relevant_topics(
+                chunk_embedding, topic_keys_embeddings
+            )
+
+            relevant_topics = [topic_keys[i] for i in relevant_topic_keys]
 
             # Base payload from metadata
             chunk_data = metadata.copy()
@@ -266,7 +257,8 @@ class RAGSystem:
                 {
                     "index": i,
                     "text": chunk_text,
-                    "topic_keys": topic_keys,  # Use the global topics from LLM
+                    "all_topic_keys": topic_keys,
+                    "relevant_topic_keys": relevant_topics,
                     "source_file": os.path.basename(file_path),
                     "summary": final_summary,
                     "created_at": time.time(),
@@ -348,20 +340,20 @@ class RAGSystem:
 
 
 if __name__ == "__main__":
-    rag = RAGSystem(collection_name="test_collection")
+    rag = RAGSystem(collection_name="ai-service")
 
     # Add a document (Example usage needs update for new signature)
-    result = rag.add_document(
-        "data/iesc101.pdf", metadata={"class_name": "class_2", "subject_name": "subj_2"}
-    )
-    logger.info("\n--- Add Document Result ---")
-    logger.info(result)
+    # result = rag.add_document(
+    #     "data/iesc101.pdf", metadata={"class_name": "class_2", "subject_name": "subj_2"}
+    # )
+    # logger.info("\n--- Add Document Result ---")
+    # logger.info(result)
 
     # Search
-    # results = rag.search("Newtons law", limit=3)
-    # logger.info("\n--- Search Results ---")
-    # for result in results:
-    #     logger.info(f"Score: {result['score']:.4f}")
-    #     logger.info(f"Text: {result['payload']['text'][:100]}...")
-    #     logger.info(f"Metadata: {result['payload']}")
-    #     logger.info("")
+    results = rag.search("Newtons law", limit=3)
+    logger.info("\n--- Search Results ---")
+    for result in results:
+        logger.info(f"Score: {result['score']:.4f}")
+        logger.info(f"Text: {result['payload']['text'][:100]}...")
+        logger.info(f"Metadata: {result['payload']}")
+        logger.info("")
