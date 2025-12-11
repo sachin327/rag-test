@@ -109,9 +109,7 @@ class RAGSystem:
                 )
 
         if should_conditions:
-            return models.Filter(
-                must=must_conditions or None, should=should_conditions, min_should=1
-            )
+            return models.Filter(must=must_conditions or None, should=should_conditions)
 
         if must_conditions:
             return models.Filter(must=must_conditions)
@@ -326,7 +324,6 @@ class RAGSystem:
             List of search results with scores and metadata.
         """
         filter_conditions = self.build_filter(filters)
-
         return self.db.search_by_text(
             self.collection_name,
             query,

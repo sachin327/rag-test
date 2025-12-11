@@ -3,7 +3,6 @@ with Rag retrieval and LLM generation."""
 
 import os
 from typing import List, Dict, Optional
-from bson.objectid import ObjectId
 from dotenv import load_dotenv
 
 from llm.llm_open_router import LLMService
@@ -14,6 +13,12 @@ from utils.response_format import (
     ResponseSchema,
     JsonSchema,
     QuestionResponse,
+)
+from utils.mongo_util import (
+    get_topics_mongo,
+    get_classes_mongo,
+    get_chapters_mongo,
+    get_subjects_mongo,
 )
 
 logger = get_logger(__name__)
@@ -29,29 +34,14 @@ class GenerateQuestionService:
 
         logger.info("Generate Question Service initialized")
 
-    def get_topics_mongo(self, topic_ids: List[str]):
-        try:
-            # 1. Get existing topics for this subject_id
-            topics = self.mongo.get_collection("topics").find(
-                {"_id": {"$in": [ObjectId(topic_id) for topic_id in topic_ids]}}
-            )
-            topics = [
-                {"title": topic.get("title"), "description": topic.get("description")}
-                for topic in topics
-            ]
-            return topics
-        except Exception as e:
-            logger.error(f"Error getting docs from mongo: {e}")
-            return None
-
     def build_llm_context(self, candidates: List[Dict]):
         llm_context = ""
         if candidates:
             for candidate in candidates:
-                llm_context += f"""Text: {candidate["payload"]["text"]}
-Relevant Topics: {candidate["payload"]["relevant_topic_keys"]}
+                llm_context += f"""Text: {candidate["text"]}
+Relevant Topics: {candidate["relevant_topic_keys"]}
 """
-            llm_context += f"\nSummary: {candidates[0]['payload']['summary']}"
+            llm_context += f"\nSummary: {candidates[0]["summary"]}"
         return llm_context
 
     def generate_questions_for_topic_list(
@@ -80,7 +70,7 @@ Relevant Topics: {candidate["payload"]["relevant_topic_keys"]}
             f"Generating {n} questions for class={class_id}, subject={subject_id}, chapter={chapter_id}, topics={input_topics}, type={question_type}"
         )
 
-        topics = self.get_topics_mongo(input_topics)
+        topics = get_topics_mongo(self.mongo, "topics", input_topics)
 
         candidates = self.search_topics_rag(
             class_id=class_id,
@@ -123,6 +113,14 @@ Relevant Topics: {candidate["payload"]["relevant_topic_keys"]}
             filters=rag_filters,
             limit=limit,
         )
+        results = [
+            {
+                "text": result["payload"]["text"],
+                "summary": result["payload"]["summary"],
+                "relevant_topic_keys": result["payload"]["relevant_topic_keys"],
+            }
+            for result in results
+        ]
         return results
 
     def _llm_generate_questions(

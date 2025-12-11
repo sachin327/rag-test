@@ -44,11 +44,8 @@ class UploadService:
         self,
         file_path: str,
         class_id: str,
-        class_name: str,
         chapter_id: str,
-        chapter_name: str,
         subject_id: str,
-        subject_name: str,
     ):
         """Uploads a document to the Qdrant vector database.
 
@@ -56,11 +53,7 @@ class UploadService:
             file_path: Path to document file
             class_id: Unique document identifier
             chapter_id: Chapter identifier
-            chapter_name: Name of the chapter
-            class_name: Name of the class
-            subject_name: Name of the subject
             subject_id: ID of the subject
-            collection_name: Qdrant collection name
 
         Returns:
             Dictionary with ingestion statistics
@@ -82,9 +75,6 @@ class UploadService:
                     "class_id": class_id,
                     "chapter_id": chapter_id,
                     "subject_id": subject_id,
-                    "class_name": class_name,
-                    "chapter_name": chapter_name,
-                    "subject_name": subject_name,
                 },
                 "topics_extracted": len(result["all_topic_keys"]),
                 "topic_keys": result["all_topic_keys"],
@@ -98,9 +88,6 @@ class UploadService:
                 "class_id": class_id,
                 "chapter_id": chapter_id,
                 "subject_id": subject_id,
-                "class_name": class_name,
-                "chapter_name": chapter_name,
-                "subject_name": subject_name,
             },
         )
 
@@ -117,9 +104,6 @@ if __name__ == "__main__":
             file_path="data/sample.pdf",
             class_id="class_1",
             chapter_id="chapter_1",
-            chapter_name="chapter_1",
-            class_name="class_1",
-            subject_name="subject_1",
             subject_id="subject_1",
         )
 

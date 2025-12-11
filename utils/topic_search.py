@@ -187,4 +187,4 @@ if __name__ == "__main__":
         similarity_threshold=0.6,  # tune 0.75–0.85 based on experiments
     )
 
-    print(present_flags)  # e.g. [True, False, False]
+    logger.info(present_flags)  # e.g. [True, False, False]

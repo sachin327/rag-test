@@ -98,7 +98,7 @@ if __name__ == "__main__":
     # Example Usage
     try:
         llm = LLMService()
-        print(f"Health: {llm.health()}")
+        logger.info(f"Health: {llm.health()}")
 
         system_prompt = "You are a helpful assistant."
         user_prompt = "What is the operating voltage?"

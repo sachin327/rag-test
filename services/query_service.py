@@ -5,7 +5,7 @@ ingestion functionality.
 """
 
 import os
-from typing import List
+from typing import List, Dict, Any
 from logger import get_logger
 from services.rag import RAGSystem
 from dotenv import load_dotenv
@@ -38,9 +38,33 @@ class QueryService:
             host=os.getenv("REDIS_HOST", "localhost"),
             port=int(os.getenv("REDIS_PORT", 6379)),
             channel=os.getenv("REDIS_CHANNEL", "ai-service"),
-            user=os.getenv("REDIS_USER", "default"),
+            username=os.getenv("REDIS_USER", "default"),
             password=os.getenv("REDIS_PASSWORD", ""),
         )
+
+    def build_llm_context(
+        self, query: str, context_chunks: List[Dict[str, Any]]
+    ) -> str:
+        if not context_chunks:
+            return f"Question: {query}\n\nNo context provided."
+
+        context_text = "\n\n---\n\n".join(
+            [
+                f"\nContext: {chunk['payload'].get('text', '')}"
+                f"\nSummary: {chunk['payload'].get('summary', '')}"
+                f"\nchapter_id: {chunk['payload'].get('chapter_id', 'Unknown')}\n"
+                f"\nsubject_id: {chunk['payload'].get('subject_id', 'Unknown')}\n"
+                f"\nchapter_id: {chunk['payload'].get('chapter_id', 'Unknown')}\n"
+                f"\nsource_file: {chunk['payload'].get('source_file', 'Unknown')}\n"
+                for chunk in context_chunks
+            ]
+        )
+
+        return f"""Context Data:
+{context_text}
+
+Question: {query}
+"""
 
     def query(
         self,
@@ -71,7 +95,7 @@ class QueryService:
             search_filters = {
                 "class_id": class_id,
                 "subject_id": subject_id,
-                "chapter_ids": chapter_ids,
+                "chapter_id": [chapter_id for chapter_id in chapter_ids],
             }
 
             search_results = self.rag_service.search(
@@ -83,7 +107,7 @@ class QueryService:
             if not search_results:
                 logger.warning("No documents found matching the query and filters")
                 return {
-                    "response": "No relevant documents found for this query.",
+                    "answer": "No relevant documents found for this query.",
                     "sources": [],
                 }
 
@@ -94,9 +118,9 @@ class QueryService:
                 )
             )
 
+            llm_context = self.build_llm_context(query, search_results)
             response = self.llm_service.generate_rag_response(
-                query=query,
-                context=search_results,
+                query=llm_context,
                 stream=stream,
                 response_schema=rag_response_schema,
             )

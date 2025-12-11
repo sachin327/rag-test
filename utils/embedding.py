@@ -33,4 +33,4 @@ if __name__ == "__main__":
     embedding = Embedding()
     texts = ["Hello, world!", "This is a test."]
     embeddings = embedding.embed(texts)
-    print(embeddings)
+    logger.info(embeddings)

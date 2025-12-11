@@ -1,5 +1,8 @@
 from typing import Any, Dict, Literal
 from pydantic import BaseModel, Field
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class ToolFunction(BaseModel):
@@ -28,4 +31,4 @@ if __name__ == "__main__":
             parameters=GetWeatherArgs.model_json_schema(),
         )
     )
-    print(tool.model_dump())
+    logger(tool.model_dump())

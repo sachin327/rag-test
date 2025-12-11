@@ -39,9 +39,6 @@ class DocumentUploadRequest(BaseModel):
     class_id: str
     chapter_id: str
     subject_id: str
-    class_name: str
-    chapter_name: str
-    subject_name: str
 
 
 class DocumentUploadResponse(BaseModel):

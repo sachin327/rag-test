@@ -1,5 +1,8 @@
 from typing import List
 import math
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class TopicEmbedder:
@@ -56,9 +59,6 @@ class TopicEmbedder:
         # item[0] is the similarity score
         similarities.sort(key=lambda item: item[0], reverse=True)
 
-        # print("#### Similarities ####")
-        # print(similarities)
-
         # 3. Extract and return only the sorted indexes
         # item[1] is the original index
         sorted_indexes = [item[1] for item in similarities if item[0] >= 0.3]
@@ -85,11 +85,11 @@ if __name__ == "__main__":
     # Get the sorted relevant topics
     relevant_topics = embedder.get_relevant_topics(text_emb, topic_embs)
 
-    print(f"Text Embedding: {text_emb}")
-    print("-" * 30)
-    print(f"Topic Embeddings (Indices): {list(range(len(topic_embs)))}")
-    print("-" * 30)
-    print(f"Relevant Topics (Sorted Indices): {relevant_topics}")
+    logger.info(f"Text Embedding: {text_emb}")
+    logger.info("-" * 30)
+    logger.info(f"Topic Embeddings (Indices): {list(range(len(topic_embs)))}")
+    logger.info("-" * 30)
+    logger.info(f"Relevant Topics (Sorted Indices): {relevant_topics}")
 
     # You can also use the following formula visualization for better understanding:
     #

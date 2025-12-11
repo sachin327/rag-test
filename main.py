@@ -82,30 +82,6 @@ async def ping():
     return {"status": "alive"}
 
 
-# Startup event
-@app.on_event("startup")
-async def startup_event():
-    """Run on application startup."""
-    logger.info("=" * 60)
-    logger.info("🚀 RAG System API Starting...")
-    logger.info("=" * 60)
-    logger.info("📚 Swagger UI: http://API_URL/docs")
-    logger.info("📖 ReDoc: http://API_URL/redoc")
-    logger.info("🏠 Root: http://API_URL/")
-    logger.info("=" * 60)
-    logger.warning("⚠️  Note: Qdrant connection will be established on first API call")
-    logger.warning("   Make sure Qdrant is running")
-    logger.info("=" * 60 + "\n")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Run on application shutdown."""
-    logger.info("=" * 60)
-    logger.info("🛑 API Stopping...")
-    logger.info("=" * 60)
-
-
 # Endpoints
 @app.get("/")
 async def root():
@@ -176,20 +152,14 @@ async def generate_questions(request: GenerateQuestionsRequest):
 
 
 def document_meta_dependency(
-    class_id: str | None = Form(None),
-    chapter_id: str | None = Form(None),
-    subject_id: str | None = Form(None),
-    class_name: str = Form(...),
-    chapter_name: str = Form(...),
-    subject_name: str = Form(...),
+    class_id: str = Form(...),
+    chapter_id: str = Form(...),
+    subject_id: str = Form(...),
 ) -> DocumentUploadRequest:
     return DocumentUploadRequest(
         class_id=class_id,
         chapter_id=chapter_id,
         subject_id=subject_id,
-        class_name=class_name,
-        chapter_name=chapter_name,
-        subject_name=subject_name,
     )
 
 
@@ -209,9 +179,6 @@ async def upload_document(
     - **class_id**: (Optional) Unique document identifier - auto-generated if not provided
     - **chapter_id**: (Optional) Chapter identifier - auto-generated if not provided
     - **subject_id**: (Optional) Subject identifier - auto-generated if not provided
-    - **chapter_name**: Name of the chapter
-    - **class_name**: Name of the class (e.g., "Class 10")
-    - **subject_name**: Name of the subject (e.g., "Physics")
     """
 
     # Validate file extension
@@ -223,28 +190,6 @@ async def upload_document(
             status_code=400,
             detail=f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}",
         )
-
-    # Generate placeholder IDs if not provided
-    timestamp = int(time.time())
-    sanitized_filename = re.sub(
-        r"[^a-zA-Z0-9]", "_", os.path.splitext(file.filename)[0]
-    ).lower()
-
-    if not meta.class_id:
-        meta.class_id = f"doc_{sanitized_filename}_{timestamp}"
-        logger.info(f"Auto-generated class_id: {meta.class_id}")
-
-    if not meta.chapter_id:
-        # Sanitize chapter name for ID
-        sanitized_chapter = re.sub(r"[^a-zA-Z0-9]", "_", meta.chapter_name).lower()
-        meta.chapter_id = f"ch_{sanitized_chapter}_{timestamp}"
-        logger.info(f"Auto-generated chapter_id: {meta.chapter_id}")
-
-    if not meta.subject_id:
-        # Sanitize subject name for ID
-        sanitized_subject = re.sub(r"[^a-zA-Z0-9]", "_", meta.subject_name).lower()
-        meta.subject_id = f"subj_{sanitized_subject}_{timestamp}"
-        logger.info(f"Auto-generated subject_id: {meta.subject_id}")
 
     # Create uploads directory
     upload_dir = "/tmp/uploads"
@@ -267,11 +212,8 @@ async def upload_document(
         result = service.upload_document(
             file_path=file_path,
             class_id=meta.class_id,
-            class_name=meta.class_name,
             chapter_id=meta.chapter_id,
-            chapter_name=meta.chapter_name,
             subject_id=meta.subject_id,
-            subject_name=meta.subject_name,
         )
 
         return DocumentUploadResponse(**result)

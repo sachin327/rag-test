@@ -1,5 +1,8 @@
 from typing import List, Dict, Any, Literal
 from pydantic import BaseModel, Field
+from logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class JsonSchema(BaseModel):
@@ -29,7 +32,10 @@ class SummaryResponse(BaseModel):
 
 
 class QuestionItem(BaseModel):
-    question_text: str = Field(..., description="The question text")
+    question_text: str = Field(
+        ...,
+        description="The question text, do not include option in question if type is MCQ",
+    )
     answer: str = Field(..., description="The answer to the question")
     difficulty: str = Field(..., description="Difficulty level (easy, medium, hard)")
     type: str = Field(..., description="Question type (mcq, subjective)")
@@ -55,10 +61,22 @@ class QuestionResponse(BaseModel):
 
 
 class SourceItem(BaseModel):
-    chapter_ids: List[str] = Field(..., description="The chapter ids from where answer is generated")
-    subject_id: str = Field(..., description="The subject id from where answer is generated")
-    class_id: str = Field(..., description="The class id from where answer is generated")
-    source_files: List[str] = Field(..., description="The source files id from where answer is generated")
+    chapter_ids: List[str] = Field(
+        ...,
+        description="The chapter ids from where answer is generated, take from given context",
+    )
+    subject_id: str = Field(
+        ...,
+        description="The subject id from where answer is generated, take from given context",
+    )
+    class_id: str = Field(
+        ...,
+        description="The class id from where answer is generated, take from given context",
+    )
+    source_files: List[str] = Field(
+        ...,
+        description="The source files id from where answer is generated, take from given context",
+    )
 
 
 class RagQueryResponse(BaseModel):
@@ -76,4 +94,4 @@ if __name__ == "__main__":
             schema=SummaryResponse.model_json_schema(),
         )
     )
-    print(response_schema.model_dump())
+    logger.info(response_schema.model_dump())

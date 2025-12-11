@@ -114,7 +114,6 @@ def deduplicate_by_similarity(
         return []
 
     # Extract embeddings
-    print("Check 0.1")
     embeddings = []
     for item in items:
         if embedding_key in item and item[embedding_key] is not None:
