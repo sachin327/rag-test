@@ -12,8 +12,8 @@ from contextlib import asynccontextmanager
 from utils.schema import (
     GenerateQuestionsRequest,
     GenerateQuestionsResponse,
-    # QueryRequest,
-    # QueryResponse,
+    QueryRequest,
+    QueryResponse,
     DocumentUploadRequest,
     DocumentUploadResponse,
 )
@@ -21,6 +21,7 @@ from utils.schema import (
 from services.service import (
     get_upload_service,
     get_generate_question_service,
+    get_query_service,
 )
 
 from logger import get_logger
@@ -120,31 +121,25 @@ async def root():
     }
 
 
-# @app.post("/query", response_model=QueryResponse)
-# async def query_documents(request: QueryRequest):
-#     """Query the RAG system for relevant documents and generate an answer."""
-#     if not request.query.strip():
-#         raise HTTPException(status_code=400, detail="Query cannot be empty")
+@app.post("/query", response_model=QueryResponse)
+async def query_documents(request: QueryRequest):
+    """Query the RAG system for relevant documents and generate an answer."""
+    if not request.query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
 
-#     try:
-#         rag = None
-#         results = rag.search(
-#             request.query,
-#             limit=request.limit,
-#             class_id=request.class_id,
-#             chapter_id=request.chapter_id,
-#         )
+    try:
+        service = get_query_service()
+        result = service.query(
+            query=request.query,
+            class_id=request.class_id,
+            subject_id=request.subject_id,
+            chapter_id=request.chapter_id,
+            stream=request.stream,
+        )
 
-#         # Generate answer using LLM
-#         answer = None
-#         llm = None
-#         if llm:
-#             # Use streaming method to print to console while generating
-#             answer = llm.generate_response_stream(request.query, results)
-
-#         return QueryResponse(answer=answer, results=results, count=len(results))
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
+        return QueryResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Query failed: {str(e)}")
 
 
 @app.post("/generate-questions", response_model=GenerateQuestionsResponse)

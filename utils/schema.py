@@ -51,3 +51,19 @@ class DocumentUploadResponse(BaseModel):
     topic_keys: List[Dict[str, Any]]
     summary: str
     summary_length: int
+
+
+class QueryRequest(BaseModel):
+    """Request model for query."""
+
+    query: str
+    class_id: str
+    subject_id: str
+    chapter_id: str
+    stream: bool
+
+
+class QueryResponse(BaseModel):
+    """Response model for question generation."""
+
+    answer: str
