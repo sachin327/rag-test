@@ -54,6 +54,21 @@ class QuestionResponse(BaseModel):
     )
 
 
+class SourceItem(BaseModel):
+    chapter_ids: List[str] = Field(..., description="The chapter ids from where answer is generated")
+    subject_id: str = Field(..., description="The subject id from where answer is generated")
+    class_id: str = Field(..., description="The class id from where answer is generated")
+    source_files: List[str] = Field(..., description="The source files id from where answer is generated")
+
+
+class RagQueryResponse(BaseModel):
+    answer: str
+    sources: List[SourceItem] = Field(
+        default_factory=list,
+        description="List of source answer generated from",
+    )
+
+
 if __name__ == "__main__":
     response_schema = ResponseSchema(
         json_schema=JsonSchema(

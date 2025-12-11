@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Generator, Any
+from typing import List, Generator, Any, Dict
 from utils.prompt import PromptService
 from logger import get_logger
 
@@ -135,3 +135,30 @@ class LLMService(ABC):
             # Fallback: return first 200 words
             words = text.split()[:200]
             return " ".join(words)
+
+    def generate_rag_response(
+        self,
+        query: str,
+        context: List[Dict[str, str]],
+        stream: bool = False,
+        response_schema: Any = None,
+    ):
+        system_prompt = PromptService.get_rag_system_prompt()
+        user_prompt = PromptService.get_rag_user_prompt(query, context)
+
+        try:
+            logger.debug("Generating questions")
+            for summary in self.get_response(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                stream=stream,
+                response_schema=response_schema,
+            ):
+                # logger.debug(f"Generated summary: {summary}")
+                yield summary
+
+        except Exception as e:
+            logger.warning(f"Failed to generate summary with LLM: {e}")
+            # Fallback: return first 200 words
+            raise e
+

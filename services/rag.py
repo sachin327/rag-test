@@ -72,22 +72,51 @@ class RAGSystem:
                 field_schema=models.PayloadSchemaType.KEYWORD,
             )
 
-    def build_summary_context(
-        self,
-        text: str,
-        metadata: Dict[str, Any] = None,
-    ):
-        # Build context string from metadata
-        context_parts = []
-        if metadata:
-            for key, value in metadata.items():
-                # Format key to be more readable (e.g., "subject_name" -> "Subject Name")
-                readable_key = key.replace("_", " ").title()
-                context_parts.append(f"{readable_key}: {value}")
+    def build_filter(
+        self, filter_dict: Optional[Dict[str, Any]] = None
+    ) -> Optional[models.Filter]:
+        """
+        Build a Qdrant models.Filter from a dictionary of filters.
 
-        context_str = "\n".join(context_parts) if context_parts else "General content"
+        Rules:
+        - If a filter value is a `str` it is added to the `must` conditions
+          (exact match).
+        - If a filter value is a `list[str]` each element is added as a
+          `should` condition for that key. If any `should` conditions exist
+          the returned filter will include `min_should=1`.
 
-        return context_str + "\nText: " + text
+        Returns None if no valid conditions are provided.
+        """
+        if not filter_dict:
+            return None
+
+        must_conditions: List[models.FieldCondition] = []
+        should_conditions: List[models.FieldCondition] = []
+
+        for key, value in filter_dict.items():
+            if isinstance(value, str):
+                must_conditions.append(
+                    models.FieldCondition(key=key, match=models.MatchValue(value=value))
+                )
+            elif isinstance(value, list):
+                for v in value:
+                    should_conditions.append(
+                        models.FieldCondition(key=key, match=models.MatchValue(value=v))
+                    )
+            else:
+                logger.debug(
+                    f"Skipping unsupported filter type for {key}: {type(value)}"
+                )
+
+        if should_conditions:
+            return models.Filter(
+                must=must_conditions or None, should=should_conditions, min_should=1
+            )
+
+        if must_conditions:
+            return models.Filter(must=must_conditions)
+
+        return None
 
     def add_document(
         self,
@@ -296,17 +325,7 @@ class RAGSystem:
         Returns:
             List of search results with scores and metadata.
         """
-        filter_conditions = None
-        must_conditions = []
-
-        if filters:
-            for key, value in filters.items():
-                must_conditions.append(
-                    models.FieldCondition(key=key, match=models.MatchValue(value=value))
-                )
-
-        if must_conditions:
-            filter_conditions = models.Filter(must=must_conditions)
+        filter_conditions = self.build_filter(filters)
 
         return self.db.search_by_text(
             self.collection_name,
@@ -318,15 +337,7 @@ class RAGSystem:
     def search_by_filter(
         self, filters: Optional[Dict[str, Any]] = None, limit: int = 5
     ):
-        must_conditions = []
-        if filters:
-            for key, value in filters.items():
-                must_conditions.append(
-                    models.FieldCondition(key=key, match=models.MatchValue(value=value))
-                )
-
-        if must_conditions:
-            filter_conditions = models.Filter(must=must_conditions)
+        filter_conditions = self.build_filter(filters)
         return self.db.search_by_filter(
             self.collection_name,
             filter_conditions=filter_conditions,

@@ -59,11 +59,20 @@ class QueryRequest(BaseModel):
     query: str
     class_id: str
     subject_id: str
-    chapter_id: str
+    chapter_ids: List[str]
     stream: bool
+
+
+class SourceItem(BaseModel):
+
+    chapter_ids: List[str]
+    subject_id: str
+    class_id: str
+    source_files: List[str]
 
 
 class QueryResponse(BaseModel):
     """Response model for question generation."""
 
     answer: str
+    sources: List[SourceItem]

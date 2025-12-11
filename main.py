@@ -133,8 +133,7 @@ async def query_documents(request: QueryRequest):
             query=request.query,
             class_id=request.class_id,
             subject_id=request.subject_id,
-            chapter_id=request.chapter_id,
-            stream=request.stream,
+            chapter_ids=request.chapter_ids,
         )
 
         return QueryResponse(**result)

@@ -15,14 +15,16 @@ Instructions:
 """
 
     @staticmethod
-    def get_rag_user_prompt(query: str, context_chunks: List[Dict]) -> str:
+    def get_rag_user_prompt(query: str, context_chunks: List[Dict[str, str]]) -> str:
         if not context_chunks:
             return f"Question: {query}\n\nNo context provided."
 
         context_text = "\n\n---\n\n".join(
             [
-                f"Source: {chunk['payload'].get('source_file', 'Unknown')}\n"
                 f"Content: {chunk['payload'].get('text', '')}"
+                f"Source: {chunk['payload'].get('chapter_id', 'Unknown')}\n"
+                f"Source: {chunk['payload'].get('subject_id', 'Unknown')}\n"
+                f"Source: {chunk['payload'].get('chapter_id', 'Unknown')}\n"
                 for chunk in context_chunks
             ]
         )

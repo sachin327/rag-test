@@ -1,17 +1,15 @@
 """Question Generation Service Implements the core question generation logic
-with Qdrant retrieval and LLM generation."""
+with Rag retrieval and LLM generation."""
 
 import os
-import time
 from typing import List, Dict, Optional
-from qdrant_client import models
 from bson.objectid import ObjectId
 from dotenv import load_dotenv
 
 from llm.llm_open_router import LLMService
 from logger import get_logger
 from db.mongo_db import MongoDB
-from db.qdrant_db import QdrantDB
+from services.rag import RAGSystem
 from utils.response_format import (
     ResponseSchema,
     JsonSchema,
@@ -25,17 +23,7 @@ load_dotenv()
 class GenerateQuestionService:
     def __init__(self):
         """Initialize the question generation service."""
-        # Initialize Qdrant DB with gRPC enabled
-        self.qdrant = QdrantDB(
-            host=os.getenv("QDRANT_HOST"),
-            port=os.getenv("QDRANT_PORT"),
-            prefer_grpc=False,
-            api_key=os.getenv("QDRANT_API_KEY"),
-            vector_size=384,  # Fixed for all-MiniLM-L6-v2
-        )
-
-        # Create collection (512 is the vector size for all-MiniLM-L6-v2)
-        self.qdrant.create_collection(os.getenv("QDRANT_COLLECTION_NAME"))
+        self.rag_service = RAGSystem()
         self.mongo = MongoDB(os.getenv("MONGO_URI"), os.getenv("MONGO_DB_NAME"))
         self.llm_service = LLMService()
 
@@ -58,9 +46,6 @@ class GenerateQuestionService:
 
     def build_llm_context(self, candidates: List[Dict]):
         llm_context = ""
-        # print("################")
-        # print(candidates)
-        # print("################")
         if candidates:
             for candidate in candidates:
                 llm_context += f"""Text: {candidate["payload"]["text"]}
@@ -87,7 +72,6 @@ Relevant Topics: {candidate["payload"]["relevant_topic_keys"]}
             input_topics: List of topic strings
             n: Number of questions to generate
             question_type: 'mcq' or 'subjective'
-            collection_name: Qdrant collection name
 
         Returns:
             List of question dictionaries
@@ -98,8 +82,7 @@ Relevant Topics: {candidate["payload"]["relevant_topic_keys"]}
 
         topics = self.get_topics_mongo(input_topics)
 
-        candidates = self.search_topics_qdrant(
-            collection_name=os.getenv("QDRANT_COLLECTION_NAME"),
+        candidates = self.search_topics_rag(
             class_id=class_id,
             subject_id=subject_id,
             chapter_id=chapter_id,
@@ -108,10 +91,10 @@ Relevant Topics: {candidate["payload"]["relevant_topic_keys"]}
         )
 
         if not candidates:
-            logger.warning("No candidates found in Qdrant")
+            logger.warning("No candidates found in RAG")
             return []
 
-        logger.info(f"Retrieved {len(candidates)} candidates from Qdrant")
+        logger.info(f"Retrieved {len(candidates)} candidates from RAG")
 
         llm_context = self.build_llm_context(candidates)
         generated_questions = self._llm_generate_questions(
@@ -122,69 +105,22 @@ Relevant Topics: {candidate["payload"]["relevant_topic_keys"]}
 
         return generated_questions
 
-    def build_qdrant_filter(
+    def search_topics_rag(
         self,
-        class_id: str,
-        subject_id: str,
-        chapter_id: str,
-        topics: Optional[List[Dict]] = None,
-    ) -> models.Filter:
-        """
-        Build a Qdrant models.Filter that:
-        - MUST match exact class_id, subject_id, chapter_id
-        - SHOULD match any topic title against payload path 'relevant_topic_keys.name'
-            (if topics provided). At least one SHOULD must match (min_should=1).
-        """
-        must_conditions: List[models.FieldCondition] = [
-            models.FieldCondition(
-                key="class_id",
-                match=models.MatchValue(value=class_id),
-            ),
-            models.FieldCondition(
-                key="subject_id",
-                match=models.MatchValue(value=subject_id),
-            ),
-            models.FieldCondition(
-                key="chapter_id",
-                match=models.MatchValue(value=chapter_id),
-            ),
-        ]
-
-        should_conditions: List[models.FieldCondition] = []
-        if topics:
-            for t in topics:
-                title = t.get("title")
-                if title:
-                    # dot-notation to access list-of-dicts field 'relevant_topic_keys.name'
-                    should_conditions.append(
-                        models.FieldCondition(
-                            key="relevant_topic_keys.name",
-                            match=models.MatchValue(value=title),
-                        )
-                    )
-
-        if should_conditions:
-            return models.Filter(
-                must=must_conditions, should=should_conditions, min_should=1
-            )
-        else:
-            return models.Filter(must=must_conditions)
-
-    def search_topics_qdrant(
-        self,
-        collection_name: str,
         class_id: str,
         subject_id: str,
         chapter_id: str,
         topics: Optional[List[Dict]] = None,
         limit: int = 10,
     ):
-        qdrant_filter = self.build_qdrant_filter(
-            class_id, subject_id, chapter_id, topics
-        )
-        results = self.qdrant.search_by_filter(
-            collection_name=collection_name,
-            filter_conditions=qdrant_filter,
+        rag_filters = {
+            "class_id": class_id,
+            "subject_id": subject_id,
+            "chapter_id": chapter_id,
+            "relevant_topic_keys.name": [topic.get("title", "") for topic in topics],
+        }
+        results = self.rag_service.search_by_filter(
+            filters=rag_filters,
             limit=limit,
         )
         return results
