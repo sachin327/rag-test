@@ -47,42 +47,57 @@ class DocumentChunker:
         current_length = 0  # Length in approximated characters
 
         for sentence in sentences:
-            # Estimate sentence length in characters
             sentence_len = len(sentence)
-            # +1 for the space that will join the sentences
-            next_len = (
-                current_length + sentence_len + (1 if current_chunk_sentences else 0)
-            )
+
+            # Predict length if we add this sentence
+            # If current_chunk is not empty, we add a space (+1)
+            additional_len = sentence_len + (1 if current_chunk_sentences else 0)
+            next_len = current_length + additional_len
 
             # Check if adding the sentence exceeds the target size
+            # We only split if we already have content (current_chunk_sentences)
+            # This ensures we don't start an infinite loop if a single sentence is huge
             if next_len > self.target_chars and current_chunk_sentences:
                 # 1. Save the current chunk
                 chunks.append(" ".join(current_chunk_sentences))
 
                 # 2. Prepare the overlapping section for the next chunk
-
-                # Reset chunk sentences and length
                 overlap_sentences = []
                 overlap_length = 0
 
                 # Iterate backward through the sentences just added
-                # to find the sentences that constitute the desired overlap
                 for s in reversed(current_chunk_sentences):
+                    s_len = len(s)
                     # Check if adding this sentence to the overlap buffer exceeds the limit
-                    # We use <= to include the sentence that makes the buffer slightly larger
-                    if overlap_length + len(s) + 1 > self.overlap_chars:
+                    # We look ahead: current overlap + space (if not first) + sentence
+                    cost = s_len + (1 if overlap_sentences else 0)
+
+                    if overlap_length + cost > self.overlap_chars:
                         break
 
                     overlap_sentences.insert(0, s)
-                    overlap_length += len(s) + 1
+                    overlap_length += cost
 
-                # The new chunk starts with the overlap and then adds the current sentence
+                # The new chunk starts with the overlap
                 current_chunk_sentences = overlap_sentences
-                current_length = overlap_length
 
-            # Add the current sentence to the new (or existing) chunk
+                # Recalculate length strictly to avoid drift/errors
+                if current_chunk_sentences:
+                    # Sum of lengths + spaces (N-1)
+                    current_length = sum(len(s) for s in current_chunk_sentences) + (
+                        len(current_chunk_sentences) - 1
+                    )
+                else:
+                    current_length = 0
+
+                # Re-evaluate next_len for the NEW current_chunk state + current sentence
+                # We need to add the current sentence to this new start
+                additional_len = sentence_len + (1 if current_chunk_sentences else 0)
+                # Note: We don't check limit again here, we force add it to progress
+
+            # Add the current sentence
             current_chunk_sentences.append(sentence)
-            current_length += sentence_len + 1  # +1 for the space
+            current_length += additional_len
 
         # Add the last remaining chunk
         if current_chunk_sentences:

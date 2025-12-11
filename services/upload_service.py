@@ -76,8 +76,8 @@ class UploadService:
                     "chapter_id": chapter_id,
                     "subject_id": subject_id,
                 },
-                "topics_extracted": len(result["all_topic_keys"]),
-                "topic_keys": result["all_topic_keys"],
+                "topics_extracted": len(result["relevant_topic_keys"]),
+                "topic_keys": result["relevant_topic_keys"],
                 "summary": result["summary"],
                 "summary_length": len(result["summary"]),
             }

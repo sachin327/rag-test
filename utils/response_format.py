@@ -39,9 +39,9 @@ class QuestionItem(BaseModel):
     answer: str = Field(..., description="The answer to the question")
     difficulty: str = Field(..., description="Difficulty level (easy, medium, hard)")
     type: str = Field(..., description="Question type (mcq, subjective)")
-    topic_keys: List[str] = Field(
+    topic_ids: List[str] = Field(
         default_factory=list,
-        description="List of topic keys associated with the question",
+        description="List of topic ids (not name only ids) associated with the question, take from given context only do not create by yourself id topic id not present give empty list",
     )
     options: List[str] = Field(
         default_factory=list,
@@ -63,19 +63,19 @@ class QuestionResponse(BaseModel):
 class SourceItem(BaseModel):
     chapter_ids: List[str] = Field(
         ...,
-        description="The chapter ids from where answer is generated, take from given context",
+        description="The chapter ids from which context part answer is generated, take from given context only do not create by yourself",
     )
     subject_id: str = Field(
         ...,
-        description="The subject id from where answer is generated, take from given context",
+        description="The subject id from which context part answer is generated, take from given context only do not create by yourself",
     )
     class_id: str = Field(
         ...,
-        description="The class id from where answer is generated, take from given context",
+        description="The class id from which context part answer is generated, take from given context only do not create by yourself",
     )
     source_files: List[str] = Field(
         ...,
-        description="The source files id from where answer is generated, take from given context",
+        description="The source files id from which context part answer is generated, take from given context only do not create by yourself",
     )
 
 

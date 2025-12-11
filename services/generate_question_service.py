@@ -16,9 +16,6 @@ from utils.response_format import (
 )
 from utils.mongo_util import (
     get_topics_mongo,
-    get_classes_mongo,
-    get_chapters_mongo,
-    get_subjects_mongo,
 )
 
 logger = get_logger(__name__)
@@ -29,6 +26,14 @@ class GenerateQuestionService:
     def __init__(self):
         """Initialize the question generation service."""
         self.rag_service = RAGSystem()
+        self.rag_service.create_payload_index(
+            fields=[
+                "class_id",
+                "chapter_id",
+                "subject_id",
+                "relevant_topic_keys[].name",
+            ]
+        )
         self.mongo = MongoDB(os.getenv("MONGO_URI"), os.getenv("MONGO_DB_NAME"))
         self.llm_service = LLMService()
 
@@ -39,9 +44,9 @@ class GenerateQuestionService:
         if candidates:
             for candidate in candidates:
                 llm_context += f"""Text: {candidate["text"]}
-Relevant Topics: {candidate["relevant_topic_keys"]}
+Relevant Topics: {candidate["topics"]}
 """
-            llm_context += f"\nSummary: {candidates[0]["summary"]}"
+            llm_context += f"\nSummary: {candidates[0]['summary']}"
         return llm_context
 
     def generate_questions_for_topic_list(
@@ -87,6 +92,7 @@ Relevant Topics: {candidate["relevant_topic_keys"]}
         logger.info(f"Retrieved {len(candidates)} candidates from RAG")
 
         llm_context = self.build_llm_context(candidates)
+
         generated_questions = self._llm_generate_questions(
             llm_context,
             question_type,
@@ -109,18 +115,25 @@ Relevant Topics: {candidate["relevant_topic_keys"]}
             "chapter_id": chapter_id,
             "relevant_topic_keys.name": [topic.get("title", "") for topic in topics],
         }
-        results = self.rag_service.search_by_filter(
+        search_results = self.rag_service.search_by_filter(
             filters=rag_filters,
             limit=limit,
+            is_nested_filter=True,
         )
-        results = [
-            {
-                "text": result["payload"]["text"],
-                "summary": result["payload"]["summary"],
-                "relevant_topic_keys": result["payload"]["relevant_topic_keys"],
-            }
-            for result in results
-        ]
+
+        topic_name_to_key = {topic["title"]: topic["id"] for topic in topics}
+        results = []
+        for search_result in search_results:
+            for topic in search_result["payload"]["relevant_topic_keys"]:
+                topic["id"] = topic_name_to_key.get(topic["name"], "")
+
+            results.append(
+                {
+                    "text": search_result["payload"]["text"],
+                    "summary": search_result["payload"]["summary"],
+                    "topics": search_result["payload"]["relevant_topic_keys"],
+                }
+            )
         return results
 
     def _llm_generate_questions(
@@ -151,7 +164,7 @@ Relevant Topics: {candidate["relevant_topic_keys"]}
         for event in self.llm_service.generate_questions(
             context, question_type, n, response_schema=question_response_schema
         ):
-            # logger.debug(event)
+            logger.debug(event)
             response = event.get("response", {})
             # logger.debug(response)
             questions = response.get("questions", [])

@@ -72,25 +72,45 @@ class RAGSystem:
                 field_schema=models.PayloadSchemaType.KEYWORD,
             )
 
-    def build_filter(
-        self, filter_dict: Optional[Dict[str, Any]] = None
-    ) -> Optional[models.Filter]:
-        """
-        Build a Qdrant models.Filter from a dictionary of filters.
-
-        Rules:
-        - If a filter value is a `str` it is added to the `must` conditions
-          (exact match).
-        - If a filter value is a `list[str]` each element is added as a
-          `should` condition for that key. If any `should` conditions exist
-          the returned filter will include `min_should=1`.
-
-        Returns None if no valid conditions are provided.
-        """
+    def build_filter_nested(self, filter_dict: Optional[Dict[str, Any]] = None):
         if not filter_dict:
             return None
 
-        must_conditions: List[models.FieldCondition] = []
+        must_conditions: List[Any] = []
+        for key, value in filter_dict.items():
+            if isinstance(value, str):
+                must_conditions.append(
+                    models.FieldCondition(key=key, match=models.MatchValue(value=value))
+                )
+            elif isinstance(value, list):
+                should = []
+                for val in value:
+                    should.append(
+                        models.FieldCondition(
+                            key="name", match=models.MatchValue(value=val)
+                        )
+                    )
+
+                must_conditions.append(
+                    models.NestedCondition(
+                        nested=models.Nested(
+                            key=key,
+                            filter=models.Filter(
+                                should=should,
+                            ),
+                        )
+                    )
+                )
+
+        return models.Filter(must=must_conditions)
+
+    def build_filter(
+        self, filter_dict: Optional[Dict[str, Any]] = None
+    ) -> Optional[models.Filter]:
+        if not filter_dict:
+            return None
+
+        must_conditions: List[Any] = []
         should_conditions: List[models.FieldCondition] = []
 
         for key, value in filter_dict.items():
@@ -99,10 +119,14 @@ class RAGSystem:
                     models.FieldCondition(key=key, match=models.MatchValue(value=value))
                 )
             elif isinstance(value, list):
-                for v in value:
-                    should_conditions.append(
-                        models.FieldCondition(key=key, match=models.MatchValue(value=v))
-                    )
+                # If value is a list, it means "must match at least one of these values".
+                # We achieve this by adding a nested Filter with 'should' conditions to the 'must' list.
+                nested_should = [
+                    models.FieldCondition(key=key, match=models.MatchValue(value=v))
+                    for v in value
+                ]
+                if nested_should:
+                    must_conditions.append(models.Filter(should=nested_should))
             else:
                 logger.debug(
                     f"Skipping unsupported filter type for {key}: {type(value)}"
@@ -116,35 +140,31 @@ class RAGSystem:
 
         return None
 
-    def add_document(
-        self,
-        file_path: str,
-        metadata: Dict[str, Any],
-    ) -> Dict:
-        """
-        Ingests a document with enhanced metadata extraction using multi-stage processing:
-        1. Chunk into 4000 chars and generate summaries
-        2. Generate final summary and topics from all summaries
-        3. Re-chunk into 512 chars with 100 char overlap for storage
+    def process_chunk(self, chunk_text, summary_response_schema):
+        chunk_summary = ""
+        chunk_topic_list = []
+        try:
+            for event in self.llm_service.generate_summary(
+                chunk_text,
+                want_topics=True,
+                is_final=False,
+                response_schema=summary_response_schema,
+            ):
+                response = event.get("response", {})
+                chunk_summary = response.get("summary", "")
+                chunk_topic_list = response.get("topics", [])
 
-        Args:
-            file_path: Path to document file
-            metadata: Dictionary containing document metadata (e.g., class_name, subject_name)
+                # logger.info(f"Generated summary for chunk: {chunk_summary}")
+                # logger.info(f"Generated topics for chunk: {chunk_topic_list}")
 
-        Returns:
-            Dictionary with upload document information
-        """
-        logger.info(f"Starting add document for {file_path}")
+            # Format topics as string for the combined list
+            topics_str = "\n".join(topic["name"] for topic in chunk_topic_list)
+            return chunk_summary, topics_str
+        except Exception as e:
+            logger.error(f"Error processing chunk summary: {e}")
+            return "", ""
 
-        # Step 1: Load document
-        raw_text = DocumentLoader.load_document(file_path)
-
-        if not raw_text:
-            logger.error(f"No text loaded from {file_path}")
-            return {"success": False, "error": "No text loaded"}
-
-        logger.info(f"Loaded document: {len(raw_text)} chars")
-
+    def generate_summary_and_topics(self, raw_text: str):
         # Step 2: Generate summary and topics
         summary_response_schema = ResponseSchema(
             json_schema=JsonSchema(
@@ -187,32 +207,10 @@ class RAGSystem:
                 f"Generating summaries for {len(large_chunks)} chunks in parallel..."
             )
 
-            def process_chunk(chunk_text):
-                chunk_summary = ""
-                chunk_topic_list = []
-                try:
-                    for event in self.llm_service.generate_summary(
-                        chunk_text,
-                        want_topics=True,
-                        is_final=False,
-                        response_schema=summary_response_schema,
-                    ):
-                        response = event.get("response", {})
-                        chunk_summary = response.get("summary", "")
-                        chunk_topic_list = response.get("topics", [])
-
-                        # logger.info(f"Generated summary for chunk: {chunk_summary}")
-                        # logger.info(f"Generated topics for chunk: {chunk_topic_list}")
-
-                    # Format topics as string for the combined list
-                    topics_str = "\n".join(topic["name"] for topic in chunk_topic_list)
-                    return chunk_summary, topics_str
-                except Exception as e:
-                    logger.error(f"Error processing chunk summary: {e}")
-                    return "", ""
-
             # Execute in parallel
-            results = self.thread_pool.execute(process_chunk, large_chunks)
+            results = self.thread_pool.execute(
+                self.process_chunk, large_chunks, summary_response_schema
+            )
 
             chunk_summaries = [r[0] for r in results if r[0]]
             chunk_topics = [r[1] for r in results if r[1]]
@@ -244,6 +242,39 @@ class RAGSystem:
             logger.info(f"Generated {len(topic_keys)} topics: {topic_keys}")
             logger.info(f"Final summary: {len(final_summary)} chars")
 
+        return final_summary, topic_keys
+
+    def add_document(
+        self,
+        file_path: str,
+        metadata: Dict[str, Any],
+    ) -> Dict:
+        """
+        Ingests a document with enhanced metadata extraction using multi-stage processing:
+        1. Chunk into 4000 chars and generate summaries
+        2. Generate final summary and topics from all summaries
+        3. Re-chunk into 512 chars with 100 char overlap for storage
+
+        Args:
+            file_path: Path to document file
+            metadata: Dictionary containing document metadata (e.g., class_name, subject_name)
+
+        Returns:
+            Dictionary with upload document information
+        """
+        logger.info(f"Starting add document for {file_path}")
+
+        # Step 1: Load document
+        raw_text = DocumentLoader.load_document(file_path)
+
+        if not raw_text:
+            logger.error(f"No text loaded from {file_path}")
+            return {"success": False, "error": "No text loaded"}
+
+        logger.info(f"Loaded document: {len(raw_text)} chars")
+
+        final_summary, topic_keys = self.generate_summary_and_topics(raw_text)
+
         # Step 6: Re-chunk into 512 chars with 100 char overlap for Qdrant storage
         chunker = DocumentChunker(
             target_tokens=self.chunk_size, overlap_tokens=self.chunk_overlap
@@ -274,7 +305,13 @@ class RAGSystem:
                 chunk_embedding, topic_keys_embeddings
             )
 
-            relevant_topics = [topic_keys[i] for i in relevant_topic_keys]
+            relevant_topics = [
+                {
+                    "name": topic_keys[i]["name"],
+                    "description": topic_keys[i]["description"],
+                }
+                for i in relevant_topic_keys
+            ]
 
             # Base payload from metadata
             chunk_data = metadata.copy()
@@ -284,7 +321,6 @@ class RAGSystem:
                 {
                     "index": i,
                     "text": chunk_text,
-                    "all_topic_keys": topic_keys,
                     "relevant_topic_keys": relevant_topics,
                     "source_file": os.path.basename(file_path),
                     "summary": final_summary,
@@ -311,19 +347,12 @@ class RAGSystem:
         query: str,
         limit: int = 5,
         filters: Optional[Dict[str, Any]] = None,
+        is_nested_filter: bool = False,
     ) -> List[Dict]:
-        """Searches for relevant text chunks using a query and optional
-        filters.
-
-        Args:
-            query: The search query text.
-            limit: Number of results to return.
-            filters: Dictionary of metadata filters (key=value).
-
-        Returns:
-            List of search results with scores and metadata.
-        """
-        filter_conditions = self.build_filter(filters)
+        if is_nested_filter:
+            filter_conditions = self.build_filter_nested(filters)
+        else:
+            filter_conditions = self.build_filter(filters)
         return self.db.search_by_text(
             self.collection_name,
             query,
@@ -332,9 +361,15 @@ class RAGSystem:
         )
 
     def search_by_filter(
-        self, filters: Optional[Dict[str, Any]] = None, limit: int = 5
+        self,
+        limit: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        is_nested_filter: bool = False,
     ):
-        filter_conditions = self.build_filter(filters)
+        if is_nested_filter:
+            filter_conditions = self.build_filter_nested(filters)
+        else:
+            filter_conditions = self.build_filter(filters)
         return self.db.search_by_filter(
             self.collection_name,
             filter_conditions=filter_conditions,

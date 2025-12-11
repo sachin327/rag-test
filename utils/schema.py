@@ -23,7 +23,7 @@ class QuestionItem(BaseModel):
     answer: str
     difficulty: str
     type: str
-    topic_keys: List[str]
+    topic_ids: List[str]
     options: Optional[List[str]] = None
     correct_option_index: Optional[int] = None
 
@@ -61,7 +61,6 @@ class QueryRequest(BaseModel):
 
 
 class SourceItem(BaseModel):
-
     chapter_ids: List[str]
     subject_id: str
     class_id: str

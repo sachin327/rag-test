@@ -1,11 +1,11 @@
 import os
 from typing import List, Dict, Any
 import numpy as np
-from bson.objectid import ObjectId
 from db.mongo_db import MongoDB
 from utils.embedding import Embedding
 from dotenv import load_dotenv
 from logger import get_logger
+from utils.mongo_util import get_topics_from_subject_mongo
 
 load_dotenv()
 logger = get_logger(__name__)
@@ -17,6 +17,7 @@ class TopicSearch:
         self.topics_collection = self.mongo.get_collection(
             os.getenv("MONGO_TOPIC_COLLECTION")
         )
+        self.embedding = Embedding(os.getenv("EMBEDDING_API_URL"))
 
     def _normalize_embeddings(self, arr: np.ndarray) -> np.ndarray:
         """
@@ -27,42 +28,6 @@ class TopicSearch:
         # avoid division by zero
         norms[norms == 0] = 1.0
         return arr / norms
-
-    def get_docs_mongo(self, subject_id: str = ""):
-        try:
-            # 1. Get existing topics for this subject_id
-            pipeline = [
-                # 1. Match/Filter: Find documents in chapterTopics by subjectId
-                {"$match": {"subjectId": ObjectId(subject_id)}},
-                # 2. Lookup/Join: Join chapterTopics with the topics collection
-                {
-                    "$lookup": {
-                        "from": "topics",  # The collection to join (the 'topics' collection)
-                        "localField": "topicId",  # Field from the input documents (chapterTopics)
-                        "foreignField": "_id",  # Field from the documents of the 'from' collection (topics)
-                        "as": "topicDetails",  # The name for the new array field in the output documents
-                    }
-                },
-                # 3. Unwind (Optional but Recommended): Deconstruct the 'topicDetails' array.
-                # Since topicId is likely unique, this turns the 'topicDetails' array
-                # (which contains one document) into a single object.
-                {"$unwind": "$topicDetails"},
-                # 4. Project: Shape the final output to include only the fields you need
-                {
-                    "$project": {
-                        "_id": 0,  # Exclude the _id field
-                        "topicId": "$topicId",  # Keep the topicId
-                        # Get the title from the joined document
-                        "title": "$topicDetails.title",
-                    }
-                },
-            ]
-
-            existing_docs = list(self.topics_collection.aggregate(pipeline))
-            return existing_docs
-        except Exception as e:
-            logger.error(f"Error getting docs from mongo: {e}")
-            return None
 
     def topics_exist_semantic(
         self,
@@ -89,7 +54,9 @@ class TopicSearch:
         for topic in input_topics:
             topic["is_exists"] = False
 
-        existing_docs = self.get_docs_mongo(subject_id)
+        existing_docs = get_topics_from_subject_mongo(
+            self.mongo, os.getenv("MONGO_TOPIC_COLLECTION"), subject_id
+        )
 
         # topic_names = [doc["topicId"] for doc in existing_docs if doc.get("topicId")]
 
@@ -123,11 +90,10 @@ class TopicSearch:
 
         # 3. Compute embeddings
         #    (One shot for all existing, one shot for all input)
-        embedding = Embedding(os.getenv("EMBEDDING_API_URL"))
         logger.debug("Existing names: %s", existing_names)
         logger.debug("Input names: %s", input_names)
-        existing_emb_list = embedding.embed(existing_names)  # list of vectors
-        input_emb_list = embedding.embed(input_names)  # list of vectors
+        existing_emb_list = self.embedding.embed(existing_names)  # list of vectors
+        input_emb_list = self.embedding.embed(input_names)  # list of vectors
 
         # Convert to numpy arrays
         existing_embs = np.array(existing_emb_list, dtype=float)  # (M, D)
@@ -158,6 +124,7 @@ class TopicSearch:
 
             if best_sim >= similarity_threshold:
                 input_topics[i]["is_exists"] = True
+                input_topics[i]["id"] = existing_docs[best_idx].get("_id", "")
                 input_topics[i]["name"] = existing_docs[best_idx].get("title", "")
                 input_topics[i]["description"] = existing_docs[best_idx].get(
                     "description", ""

@@ -54,7 +54,7 @@ class QueryService:
                 f"\nSummary: {chunk['payload'].get('summary', '')}"
                 f"\nchapter_id: {chunk['payload'].get('chapter_id', 'Unknown')}\n"
                 f"\nsubject_id: {chunk['payload'].get('subject_id', 'Unknown')}\n"
-                f"\nchapter_id: {chunk['payload'].get('chapter_id', 'Unknown')}\n"
+                f"\nclass_id: {chunk['payload'].get('class_id', 'Unknown')}\n"
                 f"\nsource_file: {chunk['payload'].get('source_file', 'Unknown')}\n"
                 for chunk in context_chunks
             ]
