@@ -57,6 +57,7 @@ Relevant Topics: {candidate["topics"]}
         input_topics: List[str],
         n: int = 10,
         question_type: str = "mcq",
+        is_distinct: bool = False,
     ) -> List[Dict]:
         """Generates N questions for given topics using RAG approach.
 
@@ -99,6 +100,7 @@ Relevant Topics: {candidate["topics"]}
             llm_context,
             question_type,
             n,
+            is_distinct,
         )
 
         return generated_questions
@@ -144,6 +146,7 @@ Relevant Topics: {candidate["topics"]}
         context: str,
         question_type: str,
         n: int,
+        is_distinct: bool = False,
     ) -> List[Dict]:
         """Generates questions using LLM for a given context.
 
@@ -165,7 +168,11 @@ Relevant Topics: {candidate["topics"]}
 
         questions = []
         for event in self.llm_service.generate_questions(
-            context, question_type, n, response_schema=question_response_schema
+            context,
+            question_type,
+            n,
+            response_schema=question_response_schema,
+            is_distinct=is_distinct,
         ):
             # logger.debug(event)
             response = event.get("response", {})

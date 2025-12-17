@@ -141,6 +141,7 @@ async def generate_questions(request: GenerateQuestionsRequest):
             input_topics=request.topics,
             n=request.n,
             question_type=request.type,
+            is_distinct=request.is_distinct,
         )
 
         return GenerateQuestionsResponse(questions=questions, count=len(questions))

@@ -44,10 +44,14 @@ For topics use standard educational topic names. should not be very long.
 """
 
     @staticmethod
-    def get_questions_generate_prompt(question_type: str, limit: int) -> str:
+    def get_questions_generate_prompt(
+        question_type: str, limit: int, is_distinct: bool = False
+    ) -> str:
         return f"""Your task is to generate questions from the given context.
 Try to preserrve the original meaning and context of the text.
-Output should be following the given response_schema.
+Output should be following the given response_schema. If distinct is true generated
+questions should be belong to single topic only else it should be belong to different topics.
 Question type should be {question_type}.
 Limit should be {limit}.
+Distinct should be {is_distinct}.
 """

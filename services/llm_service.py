@@ -102,6 +102,7 @@ class LLMService(ABC):
         limit: int,
         stream: bool = False,
         response_schema: Any = None,
+        is_distinct: bool = False,
     ) -> str:
         """Generates a short summary (around 200 words) for a large chunk using
         LLM.
@@ -116,8 +117,10 @@ class LLMService(ABC):
         """
 
         system_prompt = PromptService.get_questions_generate_prompt(
-            question_type, limit
+            question_type, limit, is_distinct
         )
+
+        # logger.debug(f"Question Generation System prompt: {system_prompt}")
 
         try:
             logger.debug("Generating questions")

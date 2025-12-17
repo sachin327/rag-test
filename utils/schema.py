@@ -14,6 +14,7 @@ class GenerateQuestionsRequest(BaseModel):
     topics: List[str]
     n: int = 10
     type: str = "mcq"  # 'mcq' or 'subjective'
+    is_distinct: bool = False
 
 
 class QuestionItem(BaseModel):

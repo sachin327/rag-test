@@ -34,7 +34,7 @@ class SummaryResponse(BaseModel):
 class QuestionItem(BaseModel):
     question_text: str = Field(
         ...,
-        description="The question text, do not include option in question if type is MCQ",
+        description="The question text, do not include option in question if type is MCQ, If distinct is true then question should be related to one topic only",
     )
     answer: str = Field(..., description="The answer to the question")
     difficulty: str = Field(..., description="Difficulty level (easy, medium, hard)")
@@ -42,7 +42,7 @@ class QuestionItem(BaseModel):
     explanation: str = Field(..., description="Brief explanation for the question")
     topic_ids: List[str] = Field(
         default_factory=list,
-        description="List of topic ids (not name only ids) associated with the question, take from given context only do not create by yourself id topic id not present give empty list",
+        description="List of topic ids (not name only ids) associated with the question, take from given context only do not create by yourself id topic id not present give empty list. If distinct is true then question should be related to one topic only",
     )
     options: List[str] = Field(
         default_factory=list,
