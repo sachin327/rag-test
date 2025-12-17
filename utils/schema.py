@@ -48,6 +48,7 @@ class DocumentUploadResponse(BaseModel):
     topic_keys: List[Dict[str, Any]]
     summary: str
     summary_length: int
+    is_reuploaded: bool
 
 
 class QueryRequest(BaseModel):
