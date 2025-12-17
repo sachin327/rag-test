@@ -1,7 +1,9 @@
 import os
 import time
 from typing import Dict, List, Optional, Any
+from functools import partial
 from qdrant_client.http import models
+import uuid
 
 from document.document_loader import DocumentLoader
 from llm.llm_open_router import LLMService
@@ -209,7 +211,10 @@ class RAGSystem:
 
             # Execute in parallel
             results = self.thread_pool.execute(
-                self.process_chunk, large_chunks, summary_response_schema
+                partial(
+                    self.process_chunk, summary_response_schema=summary_response_schema
+                ),
+                large_chunks,
             )
 
             chunk_summaries = [r[0] for r in results if r[0]]
@@ -239,7 +244,7 @@ class RAGSystem:
                 final_summary = response.get("summary", "")
                 topic_keys = response.get("topics", [])
 
-            logger.info(f"Generated {len(topic_keys)} topics: {topic_keys}")
+            logger.info(f"Generated {len(topic_keys)}")
             logger.info(f"Final summary: {len(final_summary)} chars")
 
         return final_summary, topic_keys
@@ -283,34 +288,46 @@ class RAGSystem:
         logger.info(f"Created {len(storage_chunks)} storage chunks")
 
         # Step 6.5: Embed topic keys
+        start = time.time()
         topic_keys = self.topic_search.topics_exist_semantic(
             subject_id=metadata.get("subject_id"),
             input_topics=topic_keys,
             similarity_threshold=0.6,
         )
+        print(f"Topic embedding time: {time.time() - start}")
         topic_names = [
             f"{topic['name']} {topic['description']}" for topic in topic_keys
         ]
+        print(f"Topic names time: {time.time() - start}")
         topic_keys_embeddings = self.embedding.embed(topic_names)
         chunk_keys_embeddings = self.embedding.embed(storage_chunks)
+        print(f"Embedding time: {time.time() - start}")
 
         # Step 7: Prepare chunks for storage with metadata
+        # Step 7: Batch Prepare chunks for storage with metadata
+        logger.info(f"Processing {len(storage_chunks)} chunks in batch...")
+
+        # Vectorized topic matching
+        # chunk_keys_embeddings: list of vectors (N)
+        # topic_keys_embeddings: list of vectors (M)
+        batch_relevant_indices = TopicEmbedder.get_relevant_topics_batch(
+            chunk_keys_embeddings, topic_keys_embeddings, threshold=0.3
+        )
+
+        points = []
         for i, chunk_text in enumerate(storage_chunks):
             # Count tokens (simple approximation: split by whitespace)
             words_count = len(chunk_text.split())
 
-            # Search relavent topics
-            chunk_embedding = chunk_keys_embeddings[i]
-            relevant_topic_keys = TopicEmbedder.get_relevant_topics(
-                chunk_embedding, topic_keys_embeddings
-            )
+            # Get relevant topics from pre-computed batch
+            relevant_indices = batch_relevant_indices[i]
 
             relevant_topics = [
                 {
-                    "name": topic_keys[i]["name"],
-                    "description": topic_keys[i]["description"],
+                    "name": topic_keys[idx]["name"],
+                    "description": topic_keys[idx]["description"],
                 }
-                for i in relevant_topic_keys
+                for idx in relevant_indices
             ]
 
             # Base payload from metadata
@@ -330,7 +347,18 @@ class RAGSystem:
                 }
             )
 
-            self.db.add_text(self.collection_name, chunk_text, payload=chunk_data)
+            # Create PointStruct directly
+            # We already have the embedding: chunk_keys_embeddings[i]
+            points.append(
+                models.PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector=chunk_keys_embeddings[i],
+                    payload=chunk_data,
+                )
+            )
+
+        # Batch Upsert
+        self.db.batch_upsert(self.collection_name, points)
 
         return {
             "success": True,

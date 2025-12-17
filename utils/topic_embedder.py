@@ -1,5 +1,6 @@
 from typing import List
 import math
+import numpy as np
 from logger import get_logger
 
 logger = get_logger(__name__)
@@ -64,6 +65,62 @@ class TopicEmbedder:
         sorted_indexes = [item[1] for item in similarities if item[0] >= 0.3]
 
         return sorted_indexes
+
+    @staticmethod
+    def get_relevant_topics_batch(
+        text_embeddings: List[List[float]],
+        topic_keys_embeddings: List[List[float]],
+        threshold: float = 0.3,
+    ) -> List[List[int]]:
+        """
+        Returns the indexes of topic_keys_embeddings most similar to each text_embedding
+        using cosine similarity, sorted from most to least similar.
+
+        Args:
+            text_embeddings: List of N embedding vectors (each vector is a list of floats)
+            topic_keys_embeddings: List of M topic embedding vectors
+            threshold: Minimum similarity score to include
+
+        Returns:
+            List of length N, where each element is a list of topic indices
+        """
+        if not text_embeddings or not topic_keys_embeddings:
+            return [[] for _ in range(len(text_embeddings))]
+
+        # Convert to numpy arrays
+        # text_embeddings: (N, D)
+        # topic_keys_embeddings: (M, D)
+        text_arr = np.array(text_embeddings)
+        topic_arr = np.array(topic_keys_embeddings)
+
+        # Normalize (L2)
+        # Avoid division by zero
+        text_norm = np.linalg.norm(text_arr, axis=1, keepdims=True)
+        text_norm[text_norm == 0] = 1.0
+        text_arr_normalized = text_arr / text_norm
+
+        topic_norm = np.linalg.norm(topic_arr, axis=1, keepdims=True)
+        topic_norm[topic_norm == 0] = 1.0
+        topic_arr_normalized = topic_arr / topic_norm
+
+        # Cosine similarity matrix: (N, M)
+        # sim[i, j] = user i vs topic j
+        sim_matrix = np.dot(text_arr_normalized, topic_arr_normalized.T)
+
+        results = []
+        for row in sim_matrix:
+            # Filter by threshold and sort
+            # Enumerate to keep index: (score, index)
+            scored_indices = [
+                (score, idx) for idx, score in enumerate(row) if score >= threshold
+            ]
+            # Sort descending by score
+            scored_indices.sort(key=lambda x: x[0], reverse=True)
+
+            # Extract indices
+            results.append([idx for _, idx in scored_indices])
+
+        return results
 
 
 if __name__ == "__main__":

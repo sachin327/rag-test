@@ -94,6 +94,8 @@ def get_topics_from_subject_mongo(
                     "topicId": "$topicId",  # Keep the topicId
                     # Get the title from the joined document
                     "title": "$topicDetails.title",
+                    "description": "$topicDetails.description",
+                    "embedding": "$topicDetails.embedding",
                 }
             },
         ]

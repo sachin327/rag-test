@@ -130,6 +130,24 @@ class QdrantDB:
         except Exception as e:
             logger.exception(f"Error adding text to '{collection_name}': {e}")
 
+    def batch_upsert(self, collection_name: str, points: List[models.PointStruct]):
+        """
+        Upserts a batch of points to the collection.
+        This allows pre-computed embeddings and payloads to be sent in one go.
+
+        Args:
+            collection_name: Name of the collection.
+            points: List of PointStruct objects.
+        """
+        try:
+            self.client.upsert(
+                collection_name=collection_name,
+                points=points,
+            )
+            logger.info(f"Batch upserted {len(points)} points to '{collection_name}'")
+        except Exception as e:
+            logger.exception(f"Error batch upserting to '{collection_name}': {e}")
+
     def search_by_text(
         self,
         collection_name: str,
