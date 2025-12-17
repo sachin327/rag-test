@@ -77,6 +77,8 @@ Relevant Topics: {candidate["topics"]}
 
         topics = get_topics_mongo(self.mongo, "topics", input_topics)
 
+        logger.info(f"Retrieved {len(topics)} topics from MongoDB")
+
         candidates = self.search_topics_rag(
             class_id=class_id,
             subject_id=subject_id,
@@ -113,8 +115,9 @@ Relevant Topics: {candidate["topics"]}
             "class_id": class_id,
             "subject_id": subject_id,
             "chapter_id": chapter_id,
-            "relevant_topic_keys.name": [topic.get("title", "") for topic in topics],
+            "relevant_topic_keys": [topic.get("title", "") for topic in topics],
         }
+
         search_results = self.rag_service.search_by_filter(
             filters=rag_filters,
             limit=limit,
