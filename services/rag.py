@@ -368,6 +368,7 @@ class RAGSystem:
             "topic_keys": topic_keys,
             "summary": final_summary,
             "summary_length": len(final_summary),
+            "is_reuploaded": False,
         }
 
     def search(

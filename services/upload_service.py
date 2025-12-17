@@ -80,6 +80,7 @@ class UploadService:
                 "topic_keys": result["relevant_topic_keys"],
                 "summary": result["summary"],
                 "summary_length": len(result["summary"]),
+                "is_reuploaded": True,
             }
 
         result = self.rag_service.add_document(
