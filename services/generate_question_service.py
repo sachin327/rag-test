@@ -167,7 +167,7 @@ Relevant Topics: {candidate["topics"]}
         for event in self.llm_service.generate_questions(
             context, question_type, n, response_schema=question_response_schema
         ):
-            logger.debug(event)
+            # logger.debug(event)
             response = event.get("response", {})
             # logger.debug(response)
             questions = response.get("questions", [])

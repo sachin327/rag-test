@@ -39,6 +39,7 @@ class QuestionItem(BaseModel):
     answer: str = Field(..., description="The answer to the question")
     difficulty: str = Field(..., description="Difficulty level (easy, medium, hard)")
     type: str = Field(..., description="Question type (mcq, subjective)")
+    explanation: str = Field(..., description="Brief explanation for the question")
     topic_ids: List[str] = Field(
         default_factory=list,
         description="List of topic ids (not name only ids) associated with the question, take from given context only do not create by yourself id topic id not present give empty list",

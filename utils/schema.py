@@ -23,6 +23,7 @@ class QuestionItem(BaseModel):
     answer: str
     difficulty: str
     type: str
+    explanation: str
     topic_ids: List[str]
     options: Optional[List[str]] = None
     correct_option_index: Optional[int] = None
