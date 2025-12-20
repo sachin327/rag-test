@@ -11,19 +11,13 @@ class DocumentChunker:
     # Define common sentence terminators for robust splitting
     SENTENCE_TERMINATORS = r"(?<=[.!?])\s+"
 
-    def __init__(self, target_tokens: int = 300, overlap_tokens: int = 50):
-        # We target 300 tokens (well within the 512-limit for 384-dim models)
-        self.target_tokens = target_tokens
-        self.overlap_tokens = overlap_tokens
-
-        # --- APPROXIMATION HACK for Token Length ---
-        # Since we avoid an external tokenizer, we approximate tokens
-        # using the 1 token ~= 4 character rule for English text.
-        self.target_chars = target_tokens * 4
-        self.overlap_chars = overlap_tokens * 4
+    def __init__(self, target_words: int = 300, overlap_words: int = 50):
+        # We target word count for better predictability
+        self.target_words = target_words
+        self.overlap_words = overlap_words
 
     def _split_into_sentences(self, text: str) -> List[str]:
-        """Splits text into sentences robustly. (Better to use NLTK/Spacy in production)"""
+        """Splits text into sentences robustly."""
         if not text:
             return []
 
@@ -33,10 +27,14 @@ class DocumentChunker:
         ]
         return sentences
 
+    def _count_words(self, text: str) -> int:
+        """Helper to count words in a string."""
+        return len(text.split())
+
     def split_chunks(self, text: str) -> List[str]:
         """
         Splits text into chunks using sentence boundaries,
-        targeting the token limit.
+        targeting the word limit.
         """
         sentences = self._split_into_sentences(text)
         if not sentences:
@@ -44,60 +42,38 @@ class DocumentChunker:
 
         chunks = []
         current_chunk_sentences = []
-        current_length = 0  # Length in approximated characters
+        current_word_count = 0
 
         for sentence in sentences:
-            sentence_len = len(sentence)
+            sentence_words = self._count_words(sentence)
 
-            # Predict length if we add this sentence
-            # If current_chunk is not empty, we add a space (+1)
-            additional_len = sentence_len + (1 if current_chunk_sentences else 0)
-            next_len = current_length + additional_len
-
-            # Check if adding the sentence exceeds the target size
-            # We only split if we already have content (current_chunk_sentences)
-            # This ensures we don't start an infinite loop if a single sentence is huge
-            if next_len > self.target_chars and current_chunk_sentences:
-                # 1. Save the current chunk
+            # If adding this sentence exceeds the target words
+            if (
+                current_word_count + sentence_words > self.target_words
+                and current_chunk_sentences
+            ):
+                # 1. Save the current chunk (up to the last sentence only)
                 chunks.append(" ".join(current_chunk_sentences))
 
-                # 2. Prepare the overlapping section for the next chunk
+                # 2. Prepare the overlap for the next chunk
                 overlap_sentences = []
-                overlap_length = 0
+                overlap_word_count = 0
 
-                # Iterate backward through the sentences just added
+                # Iterate backward through the sentences in the current chunk to build overlap
                 for s in reversed(current_chunk_sentences):
-                    s_len = len(s)
-                    # Check if adding this sentence to the overlap buffer exceeds the limit
-                    # We look ahead: current overlap + space (if not first) + sentence
-                    cost = s_len + (1 if overlap_sentences else 0)
-
-                    if overlap_length + cost > self.overlap_chars:
+                    s_words = self._count_words(s)
+                    if overlap_word_count + s_words > self.overlap_words:
                         break
-
                     overlap_sentences.insert(0, s)
-                    overlap_length += cost
+                    overlap_word_count += s_words
 
-                # The new chunk starts with the overlap
+                # Start the next chunk with the overlap
                 current_chunk_sentences = overlap_sentences
-
-                # Recalculate length strictly to avoid drift/errors
-                if current_chunk_sentences:
-                    # Sum of lengths + spaces (N-1)
-                    current_length = sum(len(s) for s in current_chunk_sentences) + (
-                        len(current_chunk_sentences) - 1
-                    )
-                else:
-                    current_length = 0
-
-                # Re-evaluate next_len for the NEW current_chunk state + current sentence
-                # We need to add the current sentence to this new start
-                additional_len = sentence_len + (1 if current_chunk_sentences else 0)
-                # Note: We don't check limit again here, we force add it to progress
+                current_word_count = overlap_word_count
 
             # Add the current sentence
             current_chunk_sentences.append(sentence)
-            current_length += additional_len
+            current_word_count += sentence_words
 
         # Add the last remaining chunk
         if current_chunk_sentences:
@@ -106,6 +82,13 @@ class DocumentChunker:
         return chunks
 
 
-# --- Example Usage ---
-# chunker = DocumentChunker(target_tokens=300, overlap_tokens=50)
-# chunks = chunker.split_chunks(large_text)
+if __name__ == "__main__":
+    # --- Example Usage ---
+    from document.document_loader import DocumentLoader
+
+    large_text = DocumentLoader().load_document("data/iesc101.pdf")
+    chunker = DocumentChunker(target_words=1000, overlap_words=0)
+    chunks = chunker.split_chunks(large_text)
+    print(f"Converted {len(large_text)} into {len(chunks)} chunks")
+    for i, chunk in enumerate(chunks):
+        print(f"Chunk{i}: {chunk[:20]}, Chars {len(chunk)}, Words {len(chunk.split())}")

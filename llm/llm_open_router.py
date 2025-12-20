@@ -91,8 +91,8 @@ class LLMService(BaseLLMService):
                     f"LLM API Error {response.status_code}: {response.text}"
                 )
 
+            event = response.json()
             if not stream:
-                event = response.json()
                 # logger.debug(event)
                 finish_reason = event["choices"][0]["finish_reason"]
                 if finish_reason and finish_reason == "tool_calls":
@@ -178,7 +178,7 @@ if __name__ == "__main__":
         for response in llm.get_response(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            stream=True,
+            stream=False,
             tools=[test_tool],
             response_schema=test_response_schema,
         ):

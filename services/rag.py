@@ -29,12 +29,10 @@ class RAGSystem:
     def __init__(
         self,
         collection_name: str = os.getenv("QDRANT_COLLECTION_NAME"),
-        chunk_size: int = int(os.getenv("QDRANT_CHUNK_SIZE", 512)),
-        chunk_overlap: int = int(os.getenv("QDRANT_CHUNK_OVERLAP", 100)),
-        summary_chunk_size: int = int(os.getenv("QDRANT_SUMMARY_CHUNK_SIZE", 4000)),
-        summary_chunk_overlap: int = int(
-            os.getenv("QDRANT_SUMMARY_CHUNK_OVERLAP", 100)
-        ),
+        chunk_size: int = int(os.getenv("QDRANT_CHUNK_SIZE", 500)),
+        chunk_overlap: int = int(os.getenv("QDRANT_CHUNK_OVERLAP", 50)),
+        summary_chunk_size: int = int(os.getenv("QDRANT_SUMMARY_CHUNK_SIZE", 1000)),
+        summary_chunk_overlap: int = int(os.getenv("QDRANT_SUMMARY_CHUNK_OVERLAP", 50)),
     ):
         """Initializes the RAG system with Qdrant DB.
 
@@ -196,12 +194,12 @@ class RAGSystem:
         else:
             # Chunk into 4000 char chunks for summary generation
             chunker = DocumentChunker(
-                target_tokens=self.summary_chunk_size,
-                overlap_tokens=self.summary_chunk_overlap,
+                target_words=self.summary_chunk_size,
+                overlap_words=self.summary_chunk_overlap,
             )
             large_chunks = chunker.split_chunks(raw_text)
             logger.info(
-                f"Created {len(large_chunks)} large chunks ({self.summary_chunk_size} chars each)"
+                f"Created {len(large_chunks)} large chunks ({self.summary_chunk_size} words each)"
             )
 
             # Generate summary for each large chunk in parallel
@@ -280,9 +278,9 @@ class RAGSystem:
 
         final_summary, topic_keys = self.generate_summary_and_topics(raw_text)
 
-        # Step 6: Re-chunk into 512 chars with 100 char overlap for Qdrant storage
+        # Step 6: Re-chunk into 500 words with 50 word overlap for Qdrant storage
         chunker = DocumentChunker(
-            target_tokens=self.chunk_size, overlap_tokens=self.chunk_overlap
+            target_words=self.chunk_size, overlap_words=self.chunk_overlap
         )
         storage_chunks = chunker.split_chunks(raw_text)
         logger.info(f"Created {len(storage_chunks)} storage chunks")
