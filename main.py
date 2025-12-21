@@ -22,6 +22,7 @@ from services.service import (
     get_upload_service,
     get_generate_question_service,
     get_query_service,
+    get_llm_insights_service,
 )
 
 from logger import get_logger
@@ -238,3 +239,35 @@ async def health_check():
     return {
         "status": "healthy",
     }
+
+
+@app.get("/ai-insights/subject/{subject_id}")
+async def get_ai_insights_subject(subject_id: str):
+    """
+    Get AI insights for a subject based on student progress.
+    """
+    try:
+        service = get_llm_insights_service()
+        insight = service.get_ai_insights_subject(subject_id)
+        return {"insight": insight}
+    except Exception as e:
+        logger.exception(f"Subject insights failed: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to generate insights: {str(e)}"
+        )
+
+
+@app.get("/ai-insights/chapter/{chapter_id}")
+async def get_ai_insights_chapter(chapter_id: str):
+    """
+    Get AI insights for a specific chapter based on student progress.
+    """
+    try:
+        service = get_llm_insights_service()
+        insight = service.get_ai_insights_chapter(chapter_id)
+        return {"insight": insight}
+    except Exception as e:
+        logger.exception(f"Chapter insights failed: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to generate insights: {str(e)}"
+        )

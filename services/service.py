@@ -1,10 +1,12 @@
 from services.upload_service import UploadService
 from services.generate_question_service import GenerateQuestionService
 from services.query_service import QueryService
+from services.llm_insights import LLMInsightsService
 
 UPLOAD_SERVICE = None
 GENERATE_QUESTION_SERVICE = None
 QUERY_SERVICE = None
+LLM_INSIGHTS_SERVICE = None
 
 
 def get_upload_service():
@@ -26,3 +28,10 @@ def get_query_service():
     if not QUERY_SERVICE:
         QUERY_SERVICE = QueryService()
     return QUERY_SERVICE
+
+
+def get_llm_insights_service():
+    global LLM_INSIGHTS_SERVICE
+    if not LLM_INSIGHTS_SERVICE:
+        LLM_INSIGHTS_SERVICE = LLMInsightsService()
+    return LLM_INSIGHTS_SERVICE

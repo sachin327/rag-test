@@ -42,7 +42,4 @@ def safe_str_to_json(string):
         return extract_payload(result)
     except Exception as e:
         logger.warning(f"Failed to convert string to JSON: {e}")
-        print("##########")
-        print(string)
-        print("##########")
         return string
