@@ -45,7 +45,10 @@ For topics use standard educational topic names. should not be very long.
 
     @staticmethod
     def get_questions_generate_prompt(
-        question_type: str, limit: int, is_distinct: bool = False
+        question_type: str,
+        limit: int,
+        is_distinct: bool = False,
+        difficulty: str = None,
     ) -> str:
         return f"""Your task is to generate questions from the given context.
 Try to preserrve the original meaning and context of the text.
@@ -54,4 +57,5 @@ questions should be belong to single topic only else it should be belong to diff
 Question type should be {question_type}.
 Limit should be {limit}.
 Distinct should be {is_distinct}.
+Difficulty should be {difficulty if difficulty else "any"}.
 """

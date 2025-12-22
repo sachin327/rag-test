@@ -19,14 +19,17 @@ class LLMInsightsService:
             logger.exception(f"Error initializing LLMInsightsService services: {e}")
             raise
 
-    def get_ai_insights_subject(self, subject_id: str) -> str:
+    def get_ai_insights_subject(self, subject_id: str, user_id: str) -> str:
         try:
             try:
                 subject_id_oid = ObjectId(subject_id)
+                user_id_oid = ObjectId(user_id)
             except Exception as e:
-                return f"Invalid Subject ID format: {e}"
+                return f"Invalid ID format: {e}"
 
-            logger.info(f"Fetching progress for Subject ID: {subject_id_oid}...")
+            logger.info(
+                f"Fetching progress for Subject ID: {subject_id_oid} and User ID: {user_id_oid}..."
+            )
 
             # Fetch Subject Name
             subjects_coll = self.mongo.get_collection("subjects")
@@ -39,8 +42,10 @@ class LLMInsightsService:
 
             collection = self.mongo.get_collection("studenttopicprogresses")
 
-            # Find all entries for this subject
-            cursor = collection.find({"subjectId": subject_id_oid})
+            # Find all entries for this subject and user
+            cursor = collection.find(
+                {"subjectId": subject_id_oid, "userId": user_id_oid}
+            )
             progress_entries = list(cursor)
 
             if not progress_entries:
@@ -157,14 +162,17 @@ class LLMInsightsService:
             logger.exception(f"An error occurred during subject analysis: {e}")
             return f"An error occurred: {str(e)}"
 
-    def get_ai_insights_chapter(self, chapter_id: str) -> str:
+    def get_ai_insights_chapter(self, chapter_id: str, user_id: str) -> str:
         try:
             try:
                 chapter_id_oid = ObjectId(chapter_id)
+                user_id_oid = ObjectId(user_id)
             except Exception as e:
-                return f"Invalid Chapter ID format: {e}"
+                return f"Invalid ID format: {e}"
 
-            logger.info(f"Fetching analysis for Chapter ID: {chapter_id_oid}...")
+            logger.info(
+                f"Fetching analysis for Chapter ID: {chapter_id_oid} and User ID: {user_id_oid}..."
+            )
 
             # Fetch Chapter Name
             chapters_coll = self.mongo.get_collection("chapters")
@@ -186,7 +194,9 @@ class LLMInsightsService:
 
             # 2. Get student progress for this chapter
             progress_coll = self.mongo.get_collection("studenttopicprogresses")
-            progress_cursor = progress_coll.find({"chapterId": chapter_id_oid})
+            progress_cursor = progress_coll.find(
+                {"chapterId": chapter_id_oid, "userId": user_id_oid}
+            )
             progress_entries = list(progress_cursor)
 
             attempted_topic_ids_set = set()

@@ -15,6 +15,7 @@ class GenerateQuestionsRequest(BaseModel):
     n: int = 10
     type: str = "mcq"  # 'mcq' or 'subjective'
     is_distinct: bool = False
+    difficulty: Optional[str] = None
 
 
 class QuestionItem(BaseModel):

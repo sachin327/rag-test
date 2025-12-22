@@ -58,6 +58,7 @@ Relevant Topics: {candidate["topics"]}
         n: int = 10,
         question_type: str = "mcq",
         is_distinct: bool = False,
+        difficulty: str = None,
     ) -> List[Dict]:
         """Generates N questions for given topics using RAG approach.
 
@@ -101,6 +102,7 @@ Relevant Topics: {candidate["topics"]}
             question_type,
             n,
             is_distinct,
+            difficulty,
         )
 
         return generated_questions
@@ -127,6 +129,7 @@ Relevant Topics: {candidate["topics"]}
         )
 
         topic_name_to_key = {topic["title"]: topic["id"] for topic in topics}
+
         results = []
         for search_result in search_results:
             for topic in search_result["payload"]["relevant_topic_keys"]:
@@ -147,6 +150,7 @@ Relevant Topics: {candidate["topics"]}
         question_type: str,
         n: int,
         is_distinct: bool = False,
+        difficulty: str = None,
     ) -> List[Dict]:
         """Generates questions using LLM for a given context.
 
@@ -173,6 +177,7 @@ Relevant Topics: {candidate["topics"]}
             n,
             response_schema=question_response_schema,
             is_distinct=is_distinct,
+            difficulty=difficulty,
         ):
             # logger.debug(event)
             response = event.get("response", {})

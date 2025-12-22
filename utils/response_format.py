@@ -37,7 +37,10 @@ class QuestionItem(BaseModel):
         description="The question text, do not include option in question if type is MCQ, If distinct is true then question should be related to one topic only",
     )
     answer: str = Field(..., description="The answer to the question")
-    difficulty: str = Field(..., description="Difficulty level (easy, medium, hard)")
+    difficulty: str = Field(
+        ...,
+        description="Difficulty level (easy, medium, hard), if given in prompt then use same difficulty level else use medium",
+    )
     type: str = Field(..., description="Question type (mcq, subjective)")
     explanation: str = Field(..., description="Brief explanation for the question")
     topic_ids: List[str] = Field(

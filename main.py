@@ -143,6 +143,7 @@ async def generate_questions(request: GenerateQuestionsRequest):
             n=request.n,
             question_type=request.type,
             is_distinct=request.is_distinct,
+            difficulty=request.difficulty or None,
         )
 
         return GenerateQuestionsResponse(questions=questions, count=len(questions))
@@ -241,14 +242,14 @@ async def health_check():
     }
 
 
-@app.get("/ai-insights/subject/{subject_id}")
-async def get_ai_insights_subject(subject_id: str):
+@app.get("/ai-insights/subject")
+async def get_ai_insights_subject(subject_id: str, user_id: str):
     """
     Get AI insights for a subject based on student progress.
     """
     try:
         service = get_llm_insights_service()
-        insight = service.get_ai_insights_subject(subject_id)
+        insight = service.get_ai_insights_subject(subject_id, user_id)
         return {"insight": insight}
     except Exception as e:
         logger.exception(f"Subject insights failed: {e}")
@@ -257,14 +258,14 @@ async def get_ai_insights_subject(subject_id: str):
         )
 
 
-@app.get("/ai-insights/chapter/{chapter_id}")
-async def get_ai_insights_chapter(chapter_id: str):
+@app.get("/ai-insights/chapter")
+async def get_ai_insights_chapter(chapter_id: str, user_id: str):
     """
     Get AI insights for a specific chapter based on student progress.
     """
     try:
         service = get_llm_insights_service()
-        insight = service.get_ai_insights_chapter(chapter_id)
+        insight = service.get_ai_insights_chapter(chapter_id, user_id)
         return {"insight": insight}
     except Exception as e:
         logger.exception(f"Chapter insights failed: {e}")

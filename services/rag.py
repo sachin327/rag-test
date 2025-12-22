@@ -292,14 +292,14 @@ class RAGSystem:
             input_topics=topic_keys,
             similarity_threshold=0.6,
         )
-        print(f"Topic embedding time: {time.time() - start}")
+        logger.debug(f"Topic embedding time: {time.time() - start}")
         topic_names = [
             f"{topic['name']} {topic['description']}" for topic in topic_keys
         ]
-        print(f"Topic names time: {time.time() - start}")
+        logger.debug(f"Topic names time: {time.time() - start}")
         topic_keys_embeddings = self.embedding.embed(topic_names)
         chunk_keys_embeddings = self.embedding.embed(storage_chunks)
-        print(f"Embedding time: {time.time() - start}")
+        logger.debug(f"Embedding time: {time.time() - start}")
 
         # Step 7: Prepare chunks for storage with metadata
         # Step 7: Batch Prepare chunks for storage with metadata
