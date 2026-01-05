@@ -369,6 +369,38 @@ class RAGSystem:
             "is_reuploaded": False,
         }
 
+    def delete_document(
+        self,
+        metadata: Dict[str, Any],
+    ) -> Dict:
+        """
+        Deletes a document and its chunks from the Qdrant database based on metadata.
+
+        Args:
+            metadata: Dictionary containing document metadata (e.g., class_name, subject_name).
+
+        Returns:
+            Dictionary with deletion status.
+        """
+        logger.info(f"Starting delete document for metadata: {metadata}")
+
+        filter_conditions = self.build_filter(metadata)
+
+        if not filter_conditions:
+            logger.warning("No valid metadata provided for deletion.")
+            return {"success": False, "error": "No valid metadata provided"}
+
+        try:
+            self.db.delete_by_filter(self.collection_name, filter_conditions)
+            return {
+                "success": True,
+                "metadata": metadata,
+                "status": "deleted",
+            }
+        except Exception as e:
+            logger.error(f"Error deleting document: {e}")
+            return {"success": False, "error": str(e)}
+
     def search(
         self,
         query: str,

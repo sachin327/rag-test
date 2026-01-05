@@ -217,6 +217,23 @@ class QdrantDB:
             logger.exception(f"Error filtering in '{collection_name}': {e}")
             return []
 
+    def delete_by_filter(self, collection_name: str, filter_conditions: models.Filter):
+        """Deletes points from the collection based on filter conditions.
+
+        Args:
+            collection_name: Name of the collection.
+            filter_conditions: Qdrant filter conditions.
+        """
+        try:
+            self.client.delete(
+                collection_name=collection_name,
+                points_selector=models.FilterSelector(filter=filter_conditions),
+            )
+            logger.info(f"Deleted points from '{collection_name}' matching filter.")
+        except Exception as e:
+            logger.exception(f"Error deleting from '{collection_name}': {e}")
+            raise e
+
     def close(self):
         """Closes the Qdrant client connection."""
         if self.client:

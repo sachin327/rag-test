@@ -16,6 +16,8 @@ from utils.schema import (
     QueryResponse,
     DocumentUploadRequest,
     DocumentUploadResponse,
+    DocumentDeleteResponse,
+    DocumentSearchResponse,
 )
 
 from services.service import (
@@ -232,6 +234,70 @@ async def upload_document(
         # 3. FINALLY block is executed BEFORE the return happens
         if os.path.exists(file_path):
             os.remove(file_path)
+
+
+@app.post("/delete-document", response_model=DocumentDeleteResponse)
+async def delete_document(
+    request: DocumentUploadRequest,
+):
+    """
+    Delete a document and its chunks from the vector database.
+
+    - **class_id**: Unique document identifier
+    - **chapter_id**: Chapter identifier
+    - **subject_id**: Subject identifier
+    """
+    try:
+        service = get_upload_service()
+        if not service:
+            raise HTTPException(status_code=503, detail="Upload service not available")
+
+        result = service.delete_document(
+            class_id=request.class_id,
+            chapter_id=request.chapter_id,
+            subject_id=request.subject_id,
+        )
+
+        return DocumentDeleteResponse(**result)
+    except Exception as e:
+        logger.exception(f"Document deletion failed: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to delete document: {str(e)}"
+        )
+
+        raise HTTPException(
+            status_code=500, detail=f"Failed to delete document: {str(e)}"
+        )
+
+
+@app.post("/search-document", response_model=DocumentSearchResponse)
+async def search_document(
+    request: DocumentUploadRequest,
+):
+    """
+    Search if a document exists in the vector database by metadata.
+
+    - **class_id**: Unique document identifier
+    - **chapter_id**: Chapter identifier
+    - **subject_id**: Subject identifier
+    """
+    try:
+        service = get_upload_service()
+        if not service:
+            raise HTTPException(status_code=503, detail="Upload service not available")
+
+        result = service.search_document(
+            class_id=request.class_id,
+            chapter_id=request.chapter_id,
+            subject_id=request.subject_id,
+        )
+
+        return DocumentSearchResponse(**result)
+    except Exception as e:
+        logger.exception(f"Document search failed: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to search document: {str(e)}"
+        )
 
 
 @app.get("/health")

@@ -54,6 +54,19 @@ class DocumentUploadResponse(BaseModel):
     is_reuploaded: bool
 
 
+class DocumentDeleteResponse(BaseModel):
+    success: bool
+    metadata: Dict[str, Any]
+    status: Optional[str] = None
+    error: Optional[str] = None
+
+
+class DocumentSearchResponse(BaseModel):
+    found: bool
+    metadata: Optional[DocumentUploadRequest] = None
+    data: Optional[Dict[str, Any]] = None  # Full payload if found
+
+
 class QueryRequest(BaseModel):
     """Request model for query."""
 

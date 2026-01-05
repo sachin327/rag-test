@@ -40,6 +40,34 @@ class UploadService:
         )
         return result
 
+        return result
+
+    def search_document(
+        self,
+        class_id: str,
+        chapter_id: str,
+        subject_id: str,
+    ):
+        result = self.is_already_exists(
+            class_id=class_id,
+            chapter_id=chapter_id,
+            subject_id=subject_id,
+        )
+
+        if result:
+            payload = result[0]["payload"]
+            return {
+                "found": True,
+                "metadata": {
+                    "class_id": class_id,
+                    "chapter_id": chapter_id,
+                    "subject_id": subject_id,
+                },
+                "data": payload,
+            }
+
+        return {"found": False}
+
     def upload_document(
         self,
         file_path: str,
@@ -93,6 +121,30 @@ class UploadService:
         )
 
         return result
+
+    def delete_document(
+        self,
+        class_id: str,
+        chapter_id: str,
+        subject_id: str,
+    ):
+        """Deletes a document from the Qdrant vector database.
+
+        Args:
+            class_id: Unique document identifier
+            chapter_id: Chapter identifier
+            subject_id: ID of the subject
+
+        Returns:
+            Dictionary with deletion status
+        """
+        return self.rag_service.delete_document(
+            metadata={
+                "class_id": class_id,
+                "chapter_id": chapter_id,
+                "subject_id": subject_id,
+            }
+        )
 
 
 if __name__ == "__main__":
