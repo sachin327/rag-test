@@ -229,6 +229,33 @@ class RAGSystem:
 
             # Generate final summary and topics list (5-6 topics)
             logger.info("Generating final summary and topics list")
+
+            # Recursive summarization if combined summaries are too large
+            MAX_CONTEXT_CHARS = 12000  # Conservative limit for final summary context
+
+            while len(combined_summaries) > MAX_CONTEXT_CHARS:
+                logger.info(
+                    f"Combined summary too large ({len(combined_summaries)} chars), recursively summarizing..."
+                )
+                chunker = DocumentChunker(
+                    target_words=self.summary_chunk_size,
+                    overlap_words=self.summary_chunk_overlap,
+                )
+                intermediate_chunks = chunker.split_chunks(combined_summaries)
+
+                results = self.thread_pool.execute(
+                    partial(
+                        self.process_chunk,
+                        summary_response_schema=summary_response_schema,
+                    ),
+                    intermediate_chunks,
+                )
+
+                chunk_summaries = [r[0] for r in results if r[0]]
+                # We can ignore topics from intermediate steps or aggregate them if needed
+                # For now, let's keep focusing on reducing the summary text
+                combined_summaries = "\n\n".join(chunk_summaries)
+
             final_summary = ""
             topic_keys = []
             for event in self.llm_service.generate_summary(
@@ -298,65 +325,79 @@ class RAGSystem:
         ]
         logger.debug(f"Topic names time: {time.time() - start}")
         topic_keys_embeddings = self.embedding.embed(topic_names)
-        chunk_keys_embeddings = self.embedding.embed(storage_chunks)
-        logger.debug(f"Embedding time: {time.time() - start}")
-
-        # Step 7: Prepare chunks for storage with metadata
         # Step 7: Batch Prepare chunks for storage with metadata
-        logger.info(f"Processing {len(storage_chunks)} chunks in batch...")
-
-        # Vectorized topic matching
-        # chunk_keys_embeddings: list of vectors (N)
-        # topic_keys_embeddings: list of vectors (M)
-        batch_relevant_indices = TopicEmbedder.get_relevant_topics_batch(
-            chunk_keys_embeddings, topic_keys_embeddings, threshold=0.3
+        # Low Memory Optimization: Process end-to-end in small batches
+        BATCH_SIZE = 50
+        logger.info(
+            f"Processing {len(storage_chunks)} chunks in end-to-end batches of {BATCH_SIZE}..."
         )
 
-        points = []
-        for i, chunk_text in enumerate(storage_chunks):
-            # Count tokens (simple approximation: split by whitespace)
-            words_count = len(chunk_text.split())
+        total_chunks = len(storage_chunks)
+        for i in range(0, total_chunks, BATCH_SIZE):
+            batch_end = min(i + BATCH_SIZE, total_chunks)
+            batch_chunks = storage_chunks[i:batch_end]
+            logger.info(f"Processing batch {i} to {batch_end}...")
 
-            # Get relevant topics from pre-computed batch
-            relevant_indices = batch_relevant_indices[i]
+            # Embed batch
+            batch_embeddings = self.embedding.embed(batch_chunks)
 
-            relevant_topics = [
-                {
-                    "name": topic_keys[idx]["name"],
-                    "description": topic_keys[idx]["description"],
-                }
-                for idx in relevant_indices
-            ]
-
-            # Base payload from metadata
-            chunk_data = metadata.copy()
-
-            # Add system fields
-            chunk_data.update(
-                {
-                    "index": i,
-                    "text": chunk_text,
-                    "relevant_topic_keys": relevant_topics,
-                    "source_file": os.path.basename(file_path),
-                    "summary": final_summary,
-                    "created_at": time.time(),
-                    "words_count": words_count,
-                    "sentence_count": chunk_text.count("."),
-                }
+            # Find relevant topics for this batch
+            # We match this batch's embeddings against the GLOBAL topic embeddings
+            batch_relevant_indices = TopicEmbedder.get_relevant_topics_batch(
+                batch_embeddings, topic_keys_embeddings, threshold=0.3
             )
 
-            # Create PointStruct directly
-            # We already have the embedding: chunk_keys_embeddings[i]
-            points.append(
-                models.PointStruct(
-                    id=str(uuid.uuid4()),
-                    vector=chunk_keys_embeddings[i],
-                    payload=chunk_data,
+            batch_points = []
+            for j, chunk_text in enumerate(batch_chunks):
+                # Global index
+                global_idx = i + j
+
+                # Count tokens
+                words_count = len(chunk_text.split())
+
+                # Get relevant topics
+                relevant_indices = batch_relevant_indices[j]
+
+                relevant_topics = [
+                    {
+                        "name": topic_keys[idx]["name"],
+                        "description": topic_keys[idx]["description"],
+                    }
+                    for idx in relevant_indices
+                ]
+
+                # Base payload
+                chunk_data = metadata.copy()
+
+                # Update payload
+                chunk_data.update(
+                    {
+                        "index": global_idx,
+                        "text": chunk_text,
+                        "relevant_topic_keys": relevant_topics,
+                        "source_file": os.path.basename(file_path),
+                        "summary": final_summary,
+                        "created_at": time.time(),
+                        "words_count": words_count,
+                        "sentence_count": chunk_text.count("."),
+                    }
                 )
-            )
 
-        # Batch Upsert
-        self.db.batch_upsert(self.collection_name, points)
+                # Create Point
+                batch_points.append(
+                    models.PointStruct(
+                        id=str(uuid.uuid4()),
+                        vector=batch_embeddings[j],
+                        payload=chunk_data,
+                    )
+                )
+
+            # Upsert batch immediately
+            self.db.batch_upsert(self.collection_name, batch_points)
+
+            # Explicitly free memory (Python does this eventually, but good for clarity)
+            del batch_embeddings
+            del batch_points
 
         return {
             "success": True,

@@ -11,15 +11,24 @@ logger = get_logger(__name__)
 class Embedding:
     def __init__(self, api_url: str = os.getenv("EMBEDDING_API_URL")):
         self.api_url = api_url
+        self.session = requests.Session()
         logger.info(f"Initialized Embedding with API URL: {self.api_url}")
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         """Embed a list of texts using the external API."""
         try:
-            payload = {"inputs": texts}
-            response = requests.post(self.api_url, json=payload)
-            response.raise_for_status()
-            embeddings = response.json()
+            embeddings = []
+
+            # Process in batches
+            batch_size = 32
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i : i + batch_size]
+                payload = {"inputs": batch}
+                response = self.session.post(self.api_url, json=payload)
+                response.raise_for_status()
+                batch_embeddings = response.json()
+                embeddings.extend(batch_embeddings)
+
             return embeddings
         except requests.exceptions.RequestException as e:
             logger.error(f"Error calling embedding API: {e}")
